@@ -6,7 +6,7 @@ Working state that isn't visible from the code alone — what's in progress, wha
 
 ## Status (last updated: 2026-09-19)
 
-- Phase 0 (foundation and extraction spike) is done, including the live model run. LLM provider is OpenAI (`gpt-5.6-sol`, fallback `gpt-5.6-luna`). No commits yet. `docs/` (design docs and the implementation plan) is git-ignored on purpose; it has been updated for the OpenAI switch.
+- Phase 0 (foundation and extraction spike) is done, including the live model run. LLM provider is OpenAI (`gpt-5.6-sol`, fallback `gpt-5.6-luna`). First commit is `98e56af` on `main`; nothing pushed, no remote configured. `docs/` (design docs and the implementation plan) is git-ignored on purpose; it has been updated for the OpenAI switch.
 - Spike result (run by the user, 2026-09-19): **43/43 extracted claims had a verified quote (100%)** across the five fixtures, all served by `gpt-5.6-sol`. The fallback model was never used, so the fallback path is covered by unit tests only.
 
 ## In progress
