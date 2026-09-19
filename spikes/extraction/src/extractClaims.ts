@@ -57,6 +57,7 @@ async function requestExtraction(
     model,
     instructions: EXTRACTION_INSTRUCTIONS,
     input: renderDocumentForPrompt(document),
+    store: false,
     text: { format: zodTextFormat(extractionResultSchema, "sop_claim_extraction") },
   });
 
