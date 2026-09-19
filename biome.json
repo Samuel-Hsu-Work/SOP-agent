@@ -10,7 +10,8 @@
       "!.pnpm-store",
       "!.claude",
       "!docs",
-      "!fixtures"
+      "!fixtures",
+      "!**/next-env.d.ts"
     ]
   },
   "formatter": {

@@ -1,0 +1,53 @@
+/**
+ * Helpers for tests in this package and in the apps. Exposed as `@sop-agent/sop-core/testing` so
+ * they are not part of the main entry point.
+ */
+import type { Claim } from "./claim.ts";
+import { createEmptySession, type SopSession, type UserMessage } from "./session.ts";
+import type { WriteContext } from "./writeContext.ts";
+
+/** A fixed clock and a counting id generator, so every test run produces the same ids. */
+export function createDeterministicContext(): WriteContext {
+  let counter = 0;
+  return {
+    now: () => "2026-01-01T00:00:00.000Z",
+    newId: () => {
+      counter += 1;
+      return `id-${counter}`;
+    },
+  };
+}
+
+export function createUserMessage(id: string, text = "A user statement."): UserMessage {
+  return { id, role: "user", createdAt: "2026-01-01T00:00:00.000Z", text };
+}
+
+/** An empty draft session that already holds one user message, so claims have something to cite. */
+export function createSessionWithUserMessage(
+  context: WriteContext,
+  text?: string,
+): { session: SopSession; messageId: string } {
+  const empty = createEmptySession(context);
+  const messageId = context.newId();
+  return {
+    session: { ...empty, messages: [createUserMessage(messageId, text)] },
+    messageId,
+  };
+}
+
+/** Builds a claim directly, bypassing `applyClaim`, for states that nothing can create yet. */
+export function buildClaim(overrides: Partial<Claim> & Pick<Claim, "claimId" | "field">): Claim {
+  const status = overrides.status ?? "observed";
+  const isUnknown = status === "unknown";
+  return {
+    value: isUnknown ? null : { kind: "statement", text: "A statement." },
+    status,
+    source: { type: "employee_statement", reference: { kind: "message", messageId: "message-1" } },
+    authority: isUnknown ? "unknown" : "observed_practice",
+    effectiveDate: null,
+    note: null,
+    createdByType: "agent",
+    createdAt: "2026-01-01T00:00:00.000Z",
+    ...overrides,
+  };
+}

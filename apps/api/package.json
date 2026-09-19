@@ -1,0 +1,24 @@
+{
+  "name": "@sop-agent/api",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "tsx watch --env-file-if-exists=../../.env src/start.ts",
+    "start": "tsx --env-file-if-exists=../../.env src/start.ts",
+    "test": "vitest run --passWithNoTests",
+    "typecheck": "tsc --noEmit",
+    "smoke": "tsx --env-file-if-exists=../../.env src/smoke/liveSmokeTest.ts"
+  },
+  "dependencies": {
+    "@fastify/cors": "^11.3.0",
+    "@sop-agent/sop-core": "workspace:*",
+    "fastify": "^5.12.5",
+    "openai": "^7.19.0",
+    "pino": "^10.3.1",
+    "zod": "^4.6.5"
+  },
+  "devDependencies": {
+    "tsx": "^4.23.13",
+    "vitest": "^5.0.1"
+  }
+}
