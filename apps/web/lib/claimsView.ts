@@ -7,6 +7,7 @@ import {
   type FieldGap,
   type FieldState,
   type HistoryReason,
+  reviewActionsFor,
   type SopFieldName,
   type SopSession,
 } from "@sop-agent/sop-core";
@@ -25,6 +26,8 @@ const HISTORY_REASON_LABELS: Record<HistoryReason, string> = {
   answered_unknown: "Answered",
   marked_unknown: "Marked unknown",
   withdrawn: "Removed",
+  confirmed: "Confirmed",
+  rejected: "Rejected",
 };
 
 /** An earlier version of a claim, as shown under the claim that replaced it or in the removed list. */
@@ -35,6 +38,8 @@ export interface ClaimVersionView {
   /** Null when that version was an unknown. */
   text: string | null;
   note: string | null;
+  /** The date that version took effect, so a change to the date alone is visible. */
+  effectiveDate: string | null;
   /** Why it was removed, for a withdrawal. */
   changeNote: string | null;
   changedAt: string;
@@ -50,6 +55,11 @@ export interface ClaimView {
   text: string | null;
   note: string | null;
   effectiveDate: string | null;
+  /** What the review panel offers for this claim. Read from the same predicate as the write path. */
+  canConfirm: boolean;
+  canReject: boolean;
+  /** "Withdraw confirmation" for a confirmed claim, "Reject" otherwise. Same action, honest name. */
+  rejectLabel: string;
   /** Earlier versions of this claim, newest first. */
   previousVersions: ClaimVersionView[];
 }
@@ -77,6 +87,7 @@ function toVersionView(entry: ClaimHistoryEntry): ClaimVersionView {
     statusLabel: STATUS_LABELS[entry.previousClaim.status],
     text: entry.previousClaim.value?.text ?? null,
     note: entry.previousClaim.note,
+    effectiveDate: entry.previousClaim.effectiveDate,
     changeNote: entry.changeNote,
     changedAt: entry.changedAt,
   };
@@ -125,6 +136,8 @@ export function buildClaimsView(session: SopSession): FieldClaimsView[] {
           text: claim.value?.text ?? null,
           note: claim.note,
           effectiveDate: claim.effectiveDate,
+          ...reviewActionsFor(claim),
+          rejectLabel: claim.status === "confirmed" ? "Withdraw confirmation" : "Reject",
           previousVersions: newestFirst(
             fieldHistory.filter((entry) => entry.claimId === claim.claimId),
           ).map(toVersionView),

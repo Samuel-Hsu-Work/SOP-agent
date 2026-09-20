@@ -75,12 +75,16 @@ describe("buildResponsesRequest", () => {
   });
 
   it("offers no status the agent may not write", () => {
+    // Look at the status options a tool offers, not at the words in its descriptions: a description
+    // may say that a confirmed claim cannot be changed, but no tool may offer "confirmed" as a value.
     const { tools } = buildResponsesRequest(stepRequest());
-    const serialized = JSON.stringify(tools);
-    for (const allowed of ["observed", "proposed"]) expect(serialized).toContain(allowed);
-    for (const forbidden of ["confirmed", "extracted", "conflict"]) {
-      expect(serialized).not.toContain(forbidden);
-    }
+    const offered = tools.flatMap((tool) => {
+      const properties = (
+        tool as { parameters?: { properties?: Record<string, { enum?: string[] }> } }
+      ).parameters?.properties;
+      return properties?.status?.enum ?? [];
+    });
+    expect(new Set(offered)).toEqual(new Set(["observed", "proposed"]));
   });
 
   it("sends the state item last, after the conversation and the tool traffic", () => {

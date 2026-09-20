@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { getFieldClass, SOP_FIELD_NAMES, SOP_FIELDS } from "./sopFields.ts";
+import { ADVISORY_FIELD_NAMES, getFieldClass, SOP_FIELD_NAMES, SOP_FIELDS } from "./sopFields.ts";
 
 const BLOCKING_FIELDS = [
   "purpose",
@@ -35,5 +35,10 @@ describe("SOP fields", () => {
       expect(field.label.length).toBeGreaterThan(0);
       expect(field.description.length).toBeGreaterThan(0);
     }
+  });
+
+  it("lists the advisory fields for acknowledgement in the same order as the field list", () => {
+    expect([...ADVISORY_FIELD_NAMES]).toEqual(ADVISORY_FIELDS);
+    for (const field of ADVISORY_FIELD_NAMES) expect(getFieldClass(field)).toBe("advisory");
   });
 });

@@ -18,7 +18,7 @@ import {
   MAX_TOTAL_CLAIM_TEXT,
   MAX_USER_MESSAGE_LENGTH,
 } from "./limits.ts";
-import { SOP_FIELD_NAMES } from "./sopFields.ts";
+import { ADVISORY_FIELD_NAMES, SOP_FIELD_NAMES } from "./sopFields.ts";
 import type { WriteContext } from "./writeContext.ts";
 
 export const RECORD_CLAIM_TOOL_NAME = "record_claim";
@@ -101,33 +101,73 @@ export const HISTORY_REASONS = [
   "answered_unknown",
   "marked_unknown",
   "withdrawn",
+  "confirmed",
+  "rejected",
 ] as const;
 
 export type HistoryReason = (typeof HISTORY_REASONS)[number];
 
+/** The two reasons a person's review action writes. The agent's four commands write the rest. */
+export const REVIEW_HISTORY_REASONS = [
+  "confirmed",
+  "rejected",
+] as const satisfies readonly (typeof HISTORY_REASONS)[number][];
+
 /**
- * Append-only. Every change to an existing claim writes one entry holding the whole previous claim
- * and the user message that caused the change, so a change is never silent.
+ * Append-only. Every change to an existing claim writes one entry holding the whole previous claim,
+ * so a change is never silent.
+ *
+ * An agent's change cites the user message that caused it. A person's review action (a button
+ * click) has no message, so its entry is attributed to the user and cites none: inventing a
+ * message would put words in the transcript, and citing the last one would blame a sentence that
+ * did not cause it.
  */
-export const claimHistoryEntrySchema = z.object({
-  entryId: identifierSchema,
-  claimId: identifierSchema,
-  changedAt: timestampSchema,
-  changedBy: z.enum([...CREATOR_TYPES, "system"] as const),
-  sourceMessageId: identifierSchema,
-  reason: z.enum(HISTORY_REASONS),
-  /** Why the change happened, when the claim itself has no place for it: the reason for a withdrawal. */
-  changeNote: z.string().max(MAX_NOTE_LENGTH).nullable(),
-  previousClaim: claimSchema,
-});
+export const claimHistoryEntrySchema = z
+  .object({
+    entryId: identifierSchema,
+    claimId: identifierSchema,
+    changedAt: timestampSchema,
+    changedBy: z.enum([...CREATOR_TYPES, "system"] as const),
+    sourceMessageId: identifierSchema.nullable(),
+    reason: z.enum(HISTORY_REASONS),
+    /** Why the change happened, when the claim itself has no place for it: the reason for a withdrawal. */
+    changeNote: z.string().max(MAX_NOTE_LENGTH).nullable(),
+    previousClaim: claimSchema,
+  })
+  .superRefine((entry, context) => {
+    const isReview = (REVIEW_HISTORY_REASONS as readonly string[]).includes(entry.reason);
+    const addIssue = (message: string, path: string[]) =>
+      context.addIssue({ code: "custom", message, path });
+
+    if (isReview && (entry.changedBy !== "user" || entry.sourceMessageId !== null)) {
+      addIssue("A review action is made by the user and cites no message.", ["reason"]);
+    }
+    if (!isReview && entry.changedBy === "user") {
+      addIssue("Only a review action is attributed to the user.", ["changedBy"]);
+    }
+    if (!isReview && entry.sourceMessageId === null) {
+      addIssue("A change other than a review action must cite a message.", ["sourceMessageId"]);
+    }
+  });
 
 export type ClaimHistoryEntry = z.infer<typeof claimHistoryEntrySchema>;
 
 export const SESSION_STATUSES = ["draft", "approved"] as const;
 export type SessionStatus = (typeof SESSION_STATUSES)[number];
 
-/** Version 2 added claim `updatedAt`, step values, `procedureOrder`, and the richer history. */
-export const SESSION_SCHEMA_VERSION = 2;
+/**
+ * Version 2 added claim `updatedAt`, step values, `procedureOrder`, and the richer history.
+ * Version 3 added the approval time, the advisory-gap acknowledgements, and review history entries.
+ */
+export const SESSION_SCHEMA_VERSION = 3;
+
+/** A person's statement that they saw an advisory gap and accept it. It carries no free text. */
+export const advisoryAcknowledgementSchema = z.object({
+  field: z.enum(ADVISORY_FIELD_NAMES),
+  acknowledgedAt: timestampSchema,
+});
+
+export type AdvisoryAcknowledgement = z.infer<typeof advisoryAcknowledgementSchema>;
 
 function findDuplicate(values: readonly string[]): string | undefined {
   const seen = new Set<string>();
@@ -155,6 +195,12 @@ export const sopSessionSchema = z
     /** Claim ids of the active `procedure` claims, in the order the steps happen. */
     procedureOrder: z.array(identifierSchema).max(MAX_CLAIMS),
     claimHistory: z.array(claimHistoryEntrySchema).max(MAX_HISTORY_ENTRIES),
+    /** Null while a draft, and set with the status when the SOP is approved. */
+    approvedAt: timestampSchema.nullable(),
+    /** At most one per advisory field. Cleared by any change to a claim. */
+    advisoryAcknowledgements: z
+      .array(advisoryAcknowledgementSchema)
+      .max(ADVISORY_FIELD_NAMES.length),
   })
   .superRefine((session, context) => {
     const addIssue = (message: string, path: (string | number)[]) =>
@@ -185,7 +231,7 @@ export const sopSessionSchema = z
       }
     });
     session.claimHistory.forEach((entry, index) => {
-      if (!userMessageIds.has(entry.sourceMessageId)) {
+      if (entry.sourceMessageId !== null && !userMessageIds.has(entry.sourceMessageId)) {
         addIssue("A history entry must cite an existing user message.", [
           "claimHistory",
           index,
@@ -214,6 +260,13 @@ export const sopSessionSchema = z
       }
     });
 
+    if ((session.approvedAt !== null) !== (session.status === "approved")) {
+      addIssue("An approved session has an approval time, and a draft has none.", ["approvedAt"]);
+    }
+    if (findDuplicate(session.advisoryAcknowledgements.map((entry) => entry.field)) !== undefined) {
+      addIssue("An advisory field can be acknowledged once.", ["advisoryAcknowledgements"]);
+    }
+
     if (totalClaimTextLength(session.claims) > MAX_TOTAL_CLAIM_TEXT) {
       addIssue("The claims hold more text than a session may.", ["claims"]);
     }
@@ -234,5 +287,7 @@ export function createEmptySession(context: WriteContext): SopSession {
     claims: [],
     procedureOrder: [],
     claimHistory: [],
+    approvedAt: null,
+    advisoryAcknowledgements: [],
   };
 }

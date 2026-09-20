@@ -64,6 +64,8 @@ export const CLAIM_WRITE_ERROR_CODES = [
   "anchor_not_applicable",
   "session_limit_reached",
   "already_recorded",
+  "review_action_not_allowed",
+  "confirmation_required",
 ] as const;
 
 export type ClaimWriteErrorCode = (typeof CLAIM_WRITE_ERROR_CODES)[number];
@@ -137,6 +139,14 @@ export const claimSchema = z
       if (isStep !== (claim.field === "procedure")) {
         addIssue("Only a procedure claim holds a step, and every procedure claim does.", ["value"]);
       }
+    }
+
+    if (claim.status === "confirmed" && claim.authority === "proposed") {
+      // A person vouching for a suggestion raises its authority, so a confirmed claim never keeps
+      // the authority of an unreviewed suggestion.
+      addIssue("A confirmed claim cannot carry the authority of an unreviewed suggestion.", [
+        "authority",
+      ]);
     }
 
     if (claim.status === "observed") {

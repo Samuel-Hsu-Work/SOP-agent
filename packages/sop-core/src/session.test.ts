@@ -146,9 +146,10 @@ describe("sopSessionSchema", () => {
     expect((parsed.claims as Record<string, unknown>[])[0]?.injected).toBeUndefined();
   });
 
-  it("rejects a stored version-1 session, and other wrong versions and malformed timestamps", () => {
+  it("rejects a stored version-1 or version-2 session, and other wrong versions and malformed timestamps", () => {
     const session = createEmptySession(createDeterministicContext());
     expect(sopSessionSchema.safeParse({ ...session, schemaVersion: 1 }).success).toBe(false);
+    expect(sopSessionSchema.safeParse({ ...session, schemaVersion: 2 }).success).toBe(false);
     expect(sopSessionSchema.safeParse({ ...session, createdAt: "yesterday" }).success).toBe(false);
   });
 
@@ -272,5 +273,106 @@ describe("sopSessionSchema", () => {
       value: { kind: "statement" as const, text: "x".repeat(MAX_STATEMENT_LENGTH + 1) },
     };
     expect(sopSessionSchema.safeParse({ ...rich, claims: [longClaim] }).success).toBe(false);
+  });
+
+  describe("approval fields", () => {
+    const empty = () => createEmptySession(createDeterministicContext());
+
+    it("ties the approval time to the approved status in both directions", () => {
+      const draft = empty();
+      const at = "2026-01-02T00:00:00.000Z";
+      expect(
+        sopSessionSchema.safeParse({ ...draft, status: "approved", approvedAt: at }).success,
+      ).toBe(true);
+      expect(
+        sopSessionSchema.safeParse({ ...draft, status: "approved", approvedAt: null }).success,
+      ).toBe(false);
+      expect(
+        sopSessionSchema.safeParse({ ...draft, status: "draft", approvedAt: at }).success,
+      ).toBe(false);
+    });
+
+    it("accepts one acknowledgement per advisory field, and nothing else", () => {
+      const draft = empty();
+      const acknowledged = (field: string) => ({
+        field,
+        acknowledgedAt: "2026-01-02T00:00:00.000Z",
+      });
+      const parse = (advisoryAcknowledgements: unknown[]) =>
+        sopSessionSchema.safeParse({ ...draft, advisoryAcknowledgements }).success;
+
+      expect(parse([acknowledged("exceptions"), acknowledged("controls")])).toBe(true);
+      expect(parse([acknowledged("exceptions"), acknowledged("exceptions")])).toBe(false);
+      expect(parse([acknowledged("purpose")])).toBe(false); // a blocking field cannot be acknowledged
+      expect(parse([{ field: "exceptions" }])).toBe(false);
+      expect(
+        parse(
+          ["exceptions", "evidence", "controls", "decisionRules", "prerequisites", "x"].map(
+            acknowledged,
+          ),
+        ),
+      ).toBe(false);
+    });
+  });
+
+  describe("history entries", () => {
+    function sessionWithOneEntry() {
+      const session = buildRichSession();
+      const entry = session.claimHistory[0];
+      if (entry === undefined) throw new Error("setup failed");
+      return { session, entry };
+    }
+    const parseWith = (session: SopSession, claimHistory: unknown[]) =>
+      sopSessionSchema.safeParse({ ...session, claimHistory }).success;
+
+    it("attributes a review action to the user with no message, and an agent change to a message", () => {
+      const { session, entry } = sessionWithOneEntry();
+      expect(parseWith(session, [entry])).toBe(true);
+
+      const review = { ...entry, changedBy: "user", sourceMessageId: null, reason: "confirmed" };
+      expect(parseWith(session, [review])).toBe(true);
+      expect(parseWith(session, [{ ...review, reason: "rejected" }])).toBe(true);
+    });
+
+    it("rejects a review action that cites a message or is attributed to the agent", () => {
+      const { session, entry } = sessionWithOneEntry();
+      const review = { ...entry, changedBy: "user", sourceMessageId: null, reason: "confirmed" };
+      expect(parseWith(session, [{ ...review, sourceMessageId: entry.sourceMessageId }])).toBe(
+        false,
+      );
+      expect(parseWith(session, [{ ...review, changedBy: "agent" }])).toBe(false);
+    });
+
+    it("rejects an agent change with no message, and a user attribution for a non-review reason", () => {
+      const { session, entry } = sessionWithOneEntry();
+      expect(parseWith(session, [{ ...entry, sourceMessageId: null }])).toBe(false);
+      expect(parseWith(session, [{ ...entry, changedBy: "user" }])).toBe(false);
+    });
+  });
+
+  it("does not let a confirmed claim keep the authority of an unreviewed suggestion", () => {
+    const { session, messageId } = createSessionWithUserMessage(createDeterministicContext());
+    const source = {
+      type: "agent_suggestion" as const,
+      reference: { kind: "message" as const, messageId },
+    };
+    const confirmed = (authority: string) =>
+      sopSessionSchema.safeParse({
+        ...session,
+        claims: [
+          buildClaim({
+            claimId: "c1",
+            field: "roles",
+            status: "confirmed",
+            source,
+            authority: authority as never,
+          }),
+        ],
+      }).success;
+
+    expect(confirmed("observed_practice")).toBe(true);
+    expect(confirmed("official_policy")).toBe(true);
+    expect(confirmed("proposed")).toBe(false);
+    expect(confirmed("unknown")).toBe(false);
   });
 });

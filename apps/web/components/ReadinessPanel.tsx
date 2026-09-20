@@ -23,6 +23,22 @@ function detailOf(field: FieldClaimsView): string {
   return field.state === "unresolved" ? `${claims}, some unresolved` : claims;
 }
 
+/** What one earlier version looked like: its words, its date, and the status it had then. */
+function VersionText({ version }: { version: ClaimVersionView }) {
+  return (
+    <>
+      <span className="history-reason">{version.reasonLabel}:</span> {version.text ?? "Unknown"}
+      <span className="claim-note">
+        {" "}
+        ({version.statusLabel}
+        {version.effectiveDate === null ? "" : `, effective ${version.effectiveDate}`}
+        {version.note === null ? "" : `, ${version.note}`}
+        {version.changeNote === null ? "" : `, ${version.changeNote}`})
+      </span>
+    </>
+  );
+}
+
 function PreviousVersions({ versions }: { versions: ClaimVersionView[] }) {
   if (versions.length === 0) return null;
   return (
@@ -31,9 +47,7 @@ function PreviousVersions({ versions }: { versions: ClaimVersionView[] }) {
       <ul>
         {versions.map((version) => (
           <li key={version.entryId}>
-            <span className="history-reason">{version.reasonLabel}:</span>{" "}
-            {version.text ?? "Unknown"}
-            {version.note === null ? null : <span className="claim-note"> ({version.note})</span>}
+            <VersionText version={version} />
           </li>
         ))}
       </ul>
@@ -41,7 +55,15 @@ function PreviousVersions({ versions }: { versions: ClaimVersionView[] }) {
   );
 }
 
-function ClaimItem({ claim }: { claim: ClaimView }) {
+interface ClaimItemProps {
+  claim: ClaimView;
+  isLocked: boolean;
+  onConfirm: (claimId: string) => void;
+  onReject: (claimId: string) => void;
+  onDescribeChange: () => void;
+}
+
+function ClaimItem({ claim, isLocked, onConfirm, onReject, onDescribeChange }: ClaimItemProps) {
   return (
     <li className="claim">
       <div className="claim-body">
@@ -54,6 +76,31 @@ function ClaimItem({ claim }: { claim: ClaimView }) {
         <span className={`claim-status claim-status-${claim.status}`}>{claim.statusLabel}</span>
         {claim.effectiveDate === null ? null : <span>Effective {claim.effectiveDate}</span>}
         {claim.note === null ? null : <span className="claim-note">{claim.note}</span>}
+      </div>
+      <div className="claim-actions">
+        {claim.canConfirm ? (
+          <button
+            type="button"
+            className="small"
+            disabled={isLocked}
+            onClick={() => onConfirm(claim.claimId)}
+          >
+            Confirm
+          </button>
+        ) : null}
+        {claim.canReject ? (
+          <button
+            type="button"
+            className="small secondary"
+            disabled={isLocked}
+            onClick={() => onReject(claim.claimId)}
+          >
+            {claim.rejectLabel}
+          </button>
+        ) : null}
+        <button type="button" className="small link" disabled={isLocked} onClick={onDescribeChange}>
+          Describe a change in chat
+        </button>
       </div>
       <PreviousVersions versions={claim.previousVersions} />
     </li>
@@ -68,11 +115,7 @@ function RemovedClaims({ removed }: { removed: ClaimVersionView[] }) {
       <ul>
         {removed.map((version) => (
           <li key={version.entryId}>
-            <span className="history-reason">{version.reasonLabel}:</span>{" "}
-            {version.text ?? "Unknown"}
-            {version.changeNote === null ? null : (
-              <span className="claim-note"> ({version.changeNote})</span>
-            )}
+            <VersionText version={version} />
           </li>
         ))}
       </ul>
@@ -80,13 +123,25 @@ function RemovedClaims({ removed }: { removed: ClaimVersionView[] }) {
   );
 }
 
+export interface ReadinessPanelProps {
+  session: SopSession;
+  /** A chat turn is in flight. A review click would be overwritten by its commit, so it is refused. */
+  isBusy: boolean;
+  onConfirm: (claimId: string) => void;
+  onReject: (claimId: string) => void;
+  /** Moves the cursor to the chat, where every change to a claim is made. */
+  onDescribeChange: () => void;
+}
+
 /**
- * The claims view, one expandable section per SOP field. Readiness comes from the same function the
- * API uses to brief the agent, through `buildClaimsView`; nothing is read back from the API. The
- * view is read-only: changes are made by telling the agent in the chat.
+ * The review panel: one expandable section per SOP field, with each claim's history and the review
+ * actions. Review never edits what a claim says: confirming verifies it, and rejecting undoes one
+ * step of endorsement. Changes to the words are made by telling the agent in the chat.
  */
-export function ReadinessPanel({ session }: { session: SopSession }) {
+export function ReadinessPanel(props: ReadinessPanelProps) {
+  const { session, isBusy, onConfirm, onReject, onDescribeChange } = props;
   const fields = buildClaimsView(session);
+  const isLocked = isBusy || session.status === "approved";
   const blockingCount = fields.filter((field) => field.gap?.severity === "blocking").length;
   const advisoryCount = fields.filter((field) => field.gap?.severity === "advisory").length;
   const suggestionOnlyCount = fields.filter((field) => field.isSuggestionOnly).length;
@@ -94,7 +149,7 @@ export function ReadinessPanel({ session }: { session: SopSession }) {
   return (
     <section className="panel readiness" aria-labelledby="readiness-heading">
       <header className="panel-header">
-        <h2 id="readiness-heading">Readiness</h2>
+        <h2 id="readiness-heading">Review</h2>
         <p className="summary">
           <strong>{blockingCount}</strong> blocking · <strong>{advisoryCount}</strong> advisory
           {suggestionOnlyCount === 0 ? null : (
@@ -127,7 +182,14 @@ export function ReadinessPanel({ session }: { session: SopSession }) {
                     {field.claims.length === 0 ? null : (
                       <ul className="claim-list">
                         {field.claims.map((claim) => (
-                          <ClaimItem key={claim.claimId} claim={claim} />
+                          <ClaimItem
+                            key={claim.claimId}
+                            claim={claim}
+                            isLocked={isLocked}
+                            onConfirm={onConfirm}
+                            onReject={onReject}
+                            onDescribeChange={onDescribeChange}
+                          />
                         ))}
                       </ul>
                     )}

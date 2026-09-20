@@ -1,7 +1,14 @@
 "use client";
 
 import type { SopSession } from "@sop-agent/sop-core";
-import { type FormEvent, type KeyboardEvent, useEffect, useRef, useState } from "react";
+import {
+  type FormEvent,
+  type KeyboardEvent,
+  type RefObject,
+  useEffect,
+  useRef,
+  useState,
+} from "react";
 import type { SendResult } from "../lib/useSopSession.ts";
 
 export interface ChatPanelProps {
@@ -12,10 +19,13 @@ export interface ChatPanelProps {
   error: string | null;
   notice: string | null;
   onSend: (message: string) => Promise<SendResult>;
+  /** Lets the page move the cursor here, for "Describe a change in chat". */
+  composerRef?: RefObject<HTMLTextAreaElement | null>;
 }
 
 export function ChatPanel(props: ChatPanelProps) {
-  const { session, pendingMessage, streamingReply, isSending, error, notice, onSend } = props;
+  const { session, pendingMessage, streamingReply, isSending, error, notice, onSend, composerRef } =
+    props;
   const [draft, setDraft] = useState("");
   const endOfTranscript = useRef<HTMLDivElement | null>(null);
   const isReadOnly = session.status === "approved";
@@ -94,6 +104,7 @@ export function ChatPanel(props: ChatPanelProps) {
           Your message
         </label>
         <textarea
+          ref={composerRef}
           id="message-box"
           value={draft}
           onChange={(event) => setDraft(event.target.value)}

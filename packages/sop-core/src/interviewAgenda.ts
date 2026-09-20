@@ -6,6 +6,12 @@ import { getFieldDefinition, type SopFieldName } from "./sopFields.ts";
 /** How many questions the agenda proposes at once. The agent asks one or two, not a form. */
 export const MAX_AGENDA_QUESTIONS = 3;
 
+/** How many of the agent's earlier questions are checked for repeats of a probe. */
+const MAX_TRACKED_QUESTIONS = 30;
+
+/** Two questions count as the same one when this share of their words is shared. */
+const SAME_QUESTION_OVERLAP = 0.6;
+
 /** The longest recent question kept, so a rambling reply cannot inflate the state item. */
 const MAX_RECENT_QUESTION_LENGTH = 300;
 
@@ -15,6 +21,12 @@ export interface AgendaQuestion {
   /** A ready-made way to ask, so the same field is asked the same good way every time. */
   probe: string;
   reason: "empty" | "unresolved";
+  /**
+   * How many earlier questions were about the same thing as this probe, whatever their exact
+   * words. Above zero means the user has already been asked and moved on without answering, so the
+   * agent should ask something narrower or different instead of repeating itself.
+   */
+  timesAskedBefore: number;
 }
 
 export interface AgendaExclusion {
@@ -40,6 +52,7 @@ export interface InterviewAgenda {
  */
 export function buildInterviewAgenda(session: SopSession): InterviewAgenda {
   const report = computeGaps(session);
+  const earlierQuestions = recentQuestions(session, MAX_TRACKED_QUESTIONS);
   const askNext = report.gaps
     .filter((readiness) => readiness.askable)
     .slice(0, MAX_AGENDA_QUESTIONS)
@@ -49,6 +62,10 @@ export function buildInterviewAgenda(session: SopSession): InterviewAgenda {
         label: readiness.label,
         probe: getFieldDefinition(readiness.field).probe,
         reason: readiness.state === "empty" ? "empty" : "unresolved",
+        timesAskedBefore: countQuestionsAbout(
+          getFieldDefinition(readiness.field).probe,
+          earlierQuestions,
+        ),
       }),
     );
 
@@ -71,6 +88,25 @@ export function buildInterviewAgenda(session: SopSession): InterviewAgenda {
     blockingGapsRemaining: report.blockingGapCount,
     advisoryGapsRemaining: report.advisoryGapCount,
   };
+}
+
+function wordsOf(text: string): Set<string> {
+  return new Set(text.toLowerCase().match(/[a-z0-9]+/g) ?? []);
+}
+
+/**
+ * How many of the given questions ask about the same thing as `probe`. The agent rarely repeats a
+ * probe letter for letter ("this refund process" for "this process"), so the comparison is the
+ * share of words the two have in common, not equality.
+ */
+function countQuestionsAbout(probe: string, questions: readonly string[]): number {
+  const probeWords = wordsOf(probe);
+  return questions.filter((question) => {
+    const questionWords = wordsOf(question);
+    const shared = [...questionWords].filter((word) => probeWords.has(word)).length;
+    const total = new Set([...probeWords, ...questionWords]).size;
+    return total > 0 && shared / total >= SAME_QUESTION_OVERLAP;
+  }).length;
 }
 
 const SPELLED_NUMBERS = [
@@ -99,16 +135,39 @@ const SPELLED_NUMBERS = [
   "million",
   "dozen",
 ];
-const QUANTITY_PATTERN = new RegExp(`\\d|\\b(?:${SPELLED_NUMBERS.join("|")})\\b`, "i");
+const QUANTITY_PATTERN = new RegExp(
+  `\\d[\\d,]*(?:\\.\\d+)?|\\b(?:${SPELLED_NUMBERS.join("|")})\\b`,
+  "gi",
+);
+
+/** The numbers in a text, written the same way whether the text says "$1,000" or "1000". */
+function quantitiesIn(text: string): Set<string> {
+  return new Set(
+    [...text.matchAll(QUANTITY_PATTERN)].map((match) => match[0].toLowerCase().replace(/,/g, "")),
+  );
+}
 
 /**
- * A cheap trigger, not a judgment: does this message state a number, such as an amount, a limit or
- * a time frame? When it does, the agent is told to ask why that number. It errs toward true, which
+ * Does the latest user message state a number the conversation has not talked about yet, such as
+ * an amount, a limit or a time frame? Then the agent is told to ask why that number. A number an
+ * earlier reply already mentioned does not count: the agent asked about it then, and asking again
+ * every time the user repeats it is what a person would find robotic. It errs toward true, which
  * costs at most one extra question. "one" is left out on purpose because it is too common ("no
  * one", "one of them").
  */
-export function mentionsQuantity(text: string): boolean {
-  return QUANTITY_PATTERN.test(text);
+export function statesNewQuantity(session: SopSession): boolean {
+  const latest = session.messages[session.messages.length - 1];
+  if (latest === undefined || latest.role !== "user") return false;
+
+  const stated = quantitiesIn(latest.text);
+  if (stated.size === 0) return false;
+
+  const alreadyDiscussed = new Set(
+    session.messages
+      .filter((message) => message.role === "assistant")
+      .flatMap((message) => [...quantitiesIn(message.text)]),
+  );
+  return [...stated].some((quantity) => !alreadyDiscussed.has(quantity));
 }
 
 export interface ProcedureStepView {

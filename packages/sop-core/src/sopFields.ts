@@ -20,6 +20,20 @@ export const SOP_FIELD_NAMES = [
 
 export type SopFieldName = (typeof SOP_FIELD_NAMES)[number];
 
+/**
+ * The advisory fields, the only ones whose gap a person can acknowledge instead of filling.
+ * Kept next to the field list, and a test checks that it matches the fields declared advisory.
+ */
+export const ADVISORY_FIELD_NAMES = [
+  "exceptions",
+  "evidence",
+  "controls",
+  "decisionRules",
+  "prerequisites",
+] as const satisfies readonly SopFieldName[];
+
+export type AdvisoryFieldName = (typeof ADVISORY_FIELD_NAMES)[number];
+
 /** Fixed for v1. Nothing can change a field's class or escalate an advisory gap to blocking. */
 export type FieldClass = "blocking" | "advisory";
 

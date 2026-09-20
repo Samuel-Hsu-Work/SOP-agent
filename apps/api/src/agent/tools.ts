@@ -1,5 +1,6 @@
 import {
   AGENT_TOOL_NAMES,
+  type AgentClaimCommand,
   type AgentToolName,
   type AgentWritableStatus,
   type ApplyClaimResult,
@@ -7,7 +8,6 @@ import {
   buildInterviewAgenda,
   CLAIM_STATUSES,
   type ClaimChange,
-  type ClaimWriteCommand,
   CORRECT_CLAIM_TOOL_NAME,
   MARK_CLAIM_UNKNOWN_TOOL_NAME,
   RECORD_CLAIM_TOOL_NAME,
@@ -121,12 +121,12 @@ export const AGENT_TOOLS: readonly ModelToolSpec[] = [
   {
     name: MARK_CLAIM_UNKNOWN_TOOL_NAME,
     description:
-      "Record that the user does not know something, either for a claim that is already recorded or for a field with nothing recorded.",
+      "Record that the user does not know something, either for a claim that is already recorded or for a field with nothing recorded. Not available for a confirmed claim.",
     parameters: markClaimUnknownToolSchema,
   },
   {
     name: WITHDRAW_CLAIM_TOOL_NAME,
-    description: `Remove a claim the user says should not be there at all. Prefer correct_claim when the user gives a replacement. At most ${MAX_WITHDRAWALS_PER_TURN} per turn.`,
+    description: `Remove a claim the user says should not be there at all. Prefer correct_claim when the user gives a replacement. Not available for a confirmed claim. At most ${MAX_WITHDRAWALS_PER_TURN} per turn.`,
     parameters: withdrawClaimToolSchema,
   },
 ];
@@ -187,7 +187,7 @@ export interface ExecuteToolCallInput {
 
 interface ParsedCall {
   toolName: AgentToolName;
-  command: ClaimWriteCommand;
+  command: AgentClaimCommand;
   requestedField: RecordedToolCall["field"];
   requestedStatus: RecordedToolCall["requestedStatus"];
 }

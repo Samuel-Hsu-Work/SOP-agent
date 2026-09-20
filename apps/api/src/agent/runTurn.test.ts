@@ -191,8 +191,65 @@ describe("runAgentTurn: the model input", () => {
       "roles",
     ]);
     expect(state.doNotAsk).toEqual([{ field: "purpose", why: "user_does_not_know" }]);
-    expect(state.userMessageStatesANumber).toBe(true);
+    expect(state.userMessageStatesANewNumber).toBe(true);
     expect(state.recentQuestions).toEqual([]);
+  });
+
+  it("does not ask again about a number the agent already asked about", async () => {
+    const { run, getSession } = setup("The finance director approves refunds above $1000.");
+    const withEarlierQuestion: SopSession = {
+      ...getSession(),
+      messages: [
+        createUserMessage("earlier-user", "Agents approve up to $1,000."),
+        {
+          id: "earlier-assistant",
+          role: "assistant",
+          createdAt: "2026-01-01T00:00:00.000Z",
+          text: "Is the $1,000 limit written policy or habit?",
+          model: "test-model",
+          toolCalls: [],
+        },
+        ...getSession().messages,
+      ],
+    };
+    const { client, promise } = run([textStep("Noted.")], withEarlierQuestion);
+    await promise;
+    expect(stateOf(client.requests[0]?.stateItem).userMessageStatesANewNumber).toBe(false);
+  });
+
+  it("tells the model in the state when a field's question was already asked", async () => {
+    const { run, getSession } = setup("Let's move on.");
+    const withEarlierQuestion: SopSession = {
+      ...getSession(),
+      messages: [
+        {
+          id: "earlier-assistant",
+          role: "assistant",
+          createdAt: "2026-01-01T00:00:00.000Z",
+          text: "What is the intended outcome of this process, and why does it exist?",
+          model: "test-model",
+          toolCalls: [],
+        },
+        ...getSession().messages,
+      ],
+    };
+    const { client, promise } = run([textStep("Ok.")], withEarlierQuestion);
+    await promise;
+    const askNext = stateOf(client.requests[0]?.stateItem).askNext as {
+      field: string;
+      timesAskedBefore: number;
+    }[];
+    expect(askNext[0]).toMatchObject({ field: "purpose", timesAskedBefore: 1 });
+    expect(INSTRUCTIONS).toContain("timesAskedBefore");
+  });
+
+  it("asks for plain text, because the chat shows markdown symbols as they are", () => {
+    expect(INSTRUCTIONS).toContain("Write plain text");
+  });
+
+  it("tells the model to withdraw what the user asks to remove, not to rewrite it into its opposite", () => {
+    expect(INSTRUCTIONS).toContain("remove, delete or forget");
+    expect(INSTRUCTIONS).toContain("do not ask about a number again");
   });
 
   it("shows the agent its own recent questions from earlier turns", async () => {
@@ -558,6 +615,73 @@ describe("runAgentTurn: tool calls", () => {
       code: "withdraw_limit_reached",
     });
     expect(client.requests).toHaveLength(2);
+  });
+
+  it("refuses to withdraw or blank a confirmed claim, tells the model why, and writes nothing", async () => {
+    const { run, seed, getSession, messageId } = setup();
+    const confirmedClaim = buildClaim({
+      claimId: "confirmed-1",
+      field: "purpose",
+      status: "confirmed",
+      source: { type: "employee_statement", reference: { kind: "message", messageId } },
+    });
+    seed({ kind: "markUnknown", field: "scope", claimId: null, note: "Unknown." });
+    const session: SopSession = {
+      ...getSession(),
+      claims: [...getSession().claims, confirmedClaim],
+    };
+
+    const { client, promise } = run(
+      [
+        toolCallStep([
+          withdrawClaimCall("confirmed-1"),
+          markClaimUnknownCall("purpose", "confirmed-1"),
+        ]),
+        textStep("That claim is confirmed, so the confirmation has to be withdrawn first."),
+      ],
+      session,
+    );
+    const result = await promise;
+
+    expect(result.session.claims.find((claim) => claim.claimId === "confirmed-1")).toMatchObject({
+      status: "confirmed",
+    });
+    expect(result.stats.rejectionCodes).toEqual(["confirmation_required", "confirmation_required"]);
+    expect(result.stats.claimsWithdrawn).toBe(0);
+    const outputs = client.requests[1]?.conversation
+      .filter((item) => item.kind === "tool_result")
+      .map((item) => (item.kind === "tool_result" ? JSON.parse(item.output) : null));
+    expect(outputs?.[0].message).toContain("review panel");
+  });
+
+  it("lets the model correct a confirmed claim, which drops it to observed", async () => {
+    const { run, getSession, messageId } = setup();
+    const confirmedClaim = buildClaim({
+      claimId: "confirmed-1",
+      field: "purpose",
+      status: "confirmed",
+      source: { type: "employee_statement", reference: { kind: "message", messageId } },
+    });
+    const session: SopSession = { ...getSession(), claims: [confirmedClaim] };
+    const result = await run(
+      [
+        toolCallStep([correctClaimCall("confirmed-1", { statement: "A corrected purpose." })]),
+        textStep("Updated. It is no longer confirmed."),
+      ],
+      session,
+    ).promise;
+
+    expect(result.session.claims[0]).toMatchObject({ status: "observed" });
+    expect(result.session.claimHistory[0]).toMatchObject({
+      previousClaim: { status: "confirmed" },
+    });
+  });
+
+  it("tells the model in its static instructions what a confirmed claim is and how to change one", () => {
+    expect(INSTRUCTIONS).toContain('status "confirmed"');
+    expect(INSTRUCTIONS).toContain("Withdraw confirmation");
+    expect(INSTRUCTIONS).toContain("cannot approve the SOP");
+    expect(INSTRUCTIONS).toContain("no longer confirmed and needs to be confirmed again");
   });
 
   it("places a step before an existing step with insertBeforeClaimId", async () => {

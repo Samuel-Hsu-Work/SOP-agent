@@ -208,11 +208,22 @@ describe("POST /chat: bad requests are refused before any model call", () => {
     const client = createScriptedModelClient([]);
     const { app } = await createApp(client);
     const response = await postChat(app, {
-      session: { ...emptySession(), status: "approved" },
+      session: { ...emptySession(), status: "approved", approvedAt: "2026-01-02T00:00:00.000Z" },
       message: "Hi",
     });
     expect(response.statusCode).toBe(409);
     expect(response.json().error.code).toBe("session_approved");
+    expect(client.requests).toHaveLength(0);
+  });
+
+  it("rejects a session that says it is approved but has no approval time", async () => {
+    const client = createScriptedModelClient([]);
+    const { app } = await createApp(client);
+    const response = await postChat(app, {
+      session: { ...emptySession(), status: "approved" },
+      message: "Hi",
+    });
+    expect(response.statusCode).toBe(400);
     expect(client.requests).toHaveLength(0);
   });
 
@@ -428,6 +439,7 @@ describe("POST /chat: logs carry counts, never content", () => {
       blockingGapsAfter: 7,
       messageCount: 2,
       claimCount: 1,
+      confirmedClaimCount: 0,
     });
     expect(chatTurnLog(logLines).stateItemChars).toBeGreaterThan(0);
   });
@@ -449,6 +461,38 @@ describe("POST /chat: logs carry counts, never content", () => {
       expect(everything).not.toContain(sentinel);
     }
     for (const claim of session.claims) expect(everything).not.toContain(claim.claimId);
+  });
+});
+
+describe("POST /chat: the confirmed claim count", () => {
+  it("logs how many claims a person has confirmed, and nothing about them", async () => {
+    const client = createScriptedModelClient([textStep("Ok.")]);
+    const { app, logLines } = await createApp(client);
+    const base = emptySession();
+    const session: SopSession = {
+      ...base,
+      messages: [{ id: "m-1", role: "user", createdAt: "2026-01-01T00:00:00.000Z", text: "Hello" }],
+      claims: [
+        {
+          claimId: "confirmed-1",
+          field: "purpose",
+          value: { kind: "statement", text: "SENTINEL-CONFIRMED-TEXT-77aa" },
+          status: "confirmed",
+          source: { type: "employee_statement", reference: { kind: "message", messageId: "m-1" } },
+          authority: "observed_practice",
+          effectiveDate: null,
+          note: null,
+          createdByType: "agent",
+          createdAt: "2026-01-01T00:00:00.000Z",
+          updatedAt: "2026-01-01T00:00:00.000Z",
+        },
+      ],
+    };
+    await postChat(app, { session, message: "Next" });
+
+    expect(chatTurnLog(logLines)).toMatchObject({ outcome: "committed", confirmedClaimCount: 1 });
+    expect(logLines.join("")).not.toContain("SENTINEL-CONFIRMED-TEXT-77aa");
+    expect(logLines.join("")).not.toContain("confirmed-1");
   });
 });
 

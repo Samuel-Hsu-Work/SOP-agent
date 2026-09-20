@@ -1,8 +1,13 @@
 "use client";
 
+import { useRef, useState } from "react";
 import { useSopSession } from "../lib/useSopSession.ts";
+import { ApprovalPanel } from "./ApprovalPanel.tsx";
 import { ChatPanel } from "./ChatPanel.tsx";
 import { ReadinessPanel } from "./ReadinessPanel.tsx";
+import { SopPreview } from "./SopPreview.tsx";
+
+type SideView = "review" | "preview";
 
 export function SopWorkspace() {
   const {
@@ -14,7 +19,18 @@ export function SopWorkspace() {
     isSending,
     sendMessage,
     startNewChat,
+    confirmClaim,
+    rejectClaim,
+    setAcknowledged,
+    approve,
   } = useSopSession();
+  const [sideView, setSideView] = useState<SideView>("review");
+  const composerRef = useRef<HTMLTextAreaElement | null>(null);
+
+  function describeChangeInChat() {
+    composerRef.current?.focus();
+    composerRef.current?.scrollIntoView({ block: "center" });
+  }
 
   return (
     <div className="workspace">
@@ -42,8 +58,60 @@ export function SopWorkspace() {
             error={error}
             notice={notice}
             onSend={sendMessage}
+            composerRef={composerRef}
           />
-          <ReadinessPanel session={session} />
+          <div className="side">
+            <div className="tabs" role="tablist" aria-label="Review or preview">
+              <button
+                type="button"
+                role="tab"
+                id="tab-review"
+                aria-selected={sideView === "review"}
+                aria-controls="side-panel"
+                className={sideView === "review" ? "tab tab-active" : "tab"}
+                onClick={() => setSideView("review")}
+              >
+                Review
+              </button>
+              <button
+                type="button"
+                role="tab"
+                id="tab-preview"
+                aria-selected={sideView === "preview"}
+                aria-controls="side-panel"
+                className={sideView === "preview" ? "tab tab-active" : "tab"}
+                onClick={() => setSideView("preview")}
+              >
+                SOP preview
+              </button>
+            </div>
+            <div
+              id="side-panel"
+              role="tabpanel"
+              aria-labelledby={sideView === "review" ? "tab-review" : "tab-preview"}
+              className="side-panel"
+            >
+              {sideView === "review" ? (
+                <>
+                  <ReadinessPanel
+                    session={session}
+                    isBusy={isSending}
+                    onConfirm={confirmClaim}
+                    onReject={rejectClaim}
+                    onDescribeChange={describeChangeInChat}
+                  />
+                  <ApprovalPanel
+                    session={session}
+                    isBusy={isSending}
+                    onAcknowledge={setAcknowledged}
+                    onApprove={approve}
+                  />
+                </>
+              ) : (
+                <SopPreview session={session} />
+              )}
+            </div>
+          </div>
         </div>
       )}
     </div>

@@ -1,4 +1,5 @@
 export type {
+  AgentClaimCommand,
   ApplyClaimResult,
   ClaimWriteCommand,
   ClaimWriteError,
@@ -8,6 +9,22 @@ export type {
   WithdrawClaimCommand,
 } from "./applyClaim.ts";
 export { applyClaim, STATUSES_WRITABLE_BY } from "./applyClaim.ts";
+export type {
+  AcknowledgementErrorCode,
+  ApprovalBlocker,
+  ApprovalErrorCode,
+  ApproveSessionResult,
+  FinalizationCheck,
+  SetAcknowledgementResult,
+} from "./approval.ts";
+export {
+  ACKNOWLEDGEMENT_ERROR_CODES,
+  APPROVAL_BLOCKERS,
+  APPROVAL_ERROR_CODES,
+  approveSession,
+  checkFinalization,
+  setAdvisoryAcknowledgement,
+} from "./approval.ts";
 export type {
   ChatHttpError,
   ChatRequest,
@@ -61,12 +78,15 @@ export type {
 export {
   buildInterviewAgenda,
   MAX_AGENDA_QUESTIONS,
-  mentionsQuantity,
   orderProcedureSteps,
   recentQuestions,
+  statesNewQuantity,
 } from "./interviewAgenda.ts";
 export * from "./limits.ts";
+export type { ReviewClaimCommand } from "./reviewClaim.ts";
+export { REJECTED_NOTE, reviewActionsFor } from "./reviewClaim.ts";
 export type {
+  AdvisoryAcknowledgement,
   AgentToolName,
   AssistantMessage,
   ChatMessage,
@@ -81,20 +101,30 @@ export type {
 } from "./session.ts";
 export {
   AGENT_TOOL_NAMES,
+  advisoryAcknowledgementSchema,
   CLAIM_CHANGES,
   CORRECT_CLAIM_TOOL_NAME,
   createEmptySession,
   HISTORY_REASONS,
   MARK_CLAIM_UNKNOWN_TOOL_NAME,
   RECORD_CLAIM_TOOL_NAME,
+  REVIEW_HISTORY_REASONS,
   SESSION_SCHEMA_VERSION,
   SESSION_STATUSES,
   sopSessionSchema,
   TOOL_OUTCOME_ERROR_CODES,
   WITHDRAW_CLAIM_TOOL_NAME,
 } from "./session.ts";
-export type { FieldClass, SopField, SopFieldName } from "./sopFields.ts";
+export type { SopDocument, SopDocumentItem, SopDocumentSection } from "./sopDocument.ts";
 export {
+  buildSopDocument,
+  PROVENANCE_TAGS,
+  SOP_DOCUMENT_TITLE,
+  SOP_DOCUMENT_VERSION,
+} from "./sopDocument.ts";
+export type { AdvisoryFieldName, FieldClass, SopField, SopFieldName } from "./sopFields.ts";
+export {
+  ADVISORY_FIELD_NAMES,
   getFieldClass,
   getFieldDefinition,
   SOP_FIELD_NAMES,

@@ -239,7 +239,6 @@ textarea:focus-visible {
   list-style: none;
   margin: 0;
   padding: 0;
-  overflow-y: auto;
 }
 
 .field-row {
@@ -418,4 +417,229 @@ summary.field-row:focus-visible {
   overflow: hidden;
   clip: rect(0 0 0 0);
   white-space: nowrap;
+}
+
+/* The right-hand column: a switch between the review and the preview, and the panel it shows. */
+.side {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  min-height: 0;
+}
+
+.tabs {
+  display: flex;
+  gap: 4px;
+}
+
+.tab {
+  padding: 6px 14px;
+  color: var(--muted);
+  background: transparent;
+  border: 1px solid var(--rule);
+  border-radius: 4px;
+  font-weight: 500;
+}
+
+.tab.tab-active {
+  color: var(--accent-ink);
+  background: var(--accent);
+  border-color: var(--accent);
+}
+
+.side-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  min-height: 0;
+  overflow-y: auto;
+}
+
+/*
+ * The panels keep their natural height and the column scrolls. Without this a panel shrinks to fit
+ * the visible height, which cut the review list short and let the approval text spill out of its box.
+ */
+.side-panel > .panel {
+  flex-shrink: 0;
+}
+
+button.small {
+  padding: 3px 10px;
+  font-size: 0.82rem;
+}
+
+button.link {
+  padding-inline: 2px;
+  color: var(--accent);
+  background: transparent;
+  border-color: transparent;
+  font-weight: 500;
+  text-decoration: underline;
+}
+
+.claim-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px 8px;
+  margin-top: 6px;
+}
+
+.claim-status-confirmed {
+  color: var(--complete);
+}
+
+.approval-body {
+  display: grid;
+  gap: 12px;
+  padding: 12px 16px 16px;
+}
+
+.checklist {
+  display: grid;
+  gap: 6px;
+  margin: 0;
+  padding: 0;
+  border: none;
+  min-width: 0;
+}
+
+.checklist legend {
+  padding: 0;
+  margin-bottom: 6px;
+  color: var(--muted);
+  font-size: 0.85rem;
+}
+
+.checklist-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.approval-label {
+  margin: 0 0 4px;
+  color: var(--muted);
+  font-size: 0.85rem;
+}
+
+.suggestions-to-review ul,
+.approval-reasons {
+  margin: 0;
+  padding-left: 18px;
+  font-size: 0.9rem;
+}
+
+.approval-reasons {
+  color: var(--blocking);
+}
+
+.approved-notice {
+  margin: 0;
+  padding: 8px 12px;
+  border-radius: 4px;
+  color: var(--complete);
+  background: var(--complete-soft);
+}
+
+.preview-body {
+  padding: 12px 16px 20px;
+  display: grid;
+  gap: 14px;
+}
+
+.document-title {
+  margin: 0;
+  font-size: 1.15rem;
+}
+
+.legend-list {
+  display: grid;
+  gap: 4px;
+  margin: 0;
+  font-size: 0.82rem;
+  color: var(--muted);
+}
+
+.legend-list div {
+  display: flex;
+  gap: 8px;
+}
+
+.legend-list dt {
+  flex-shrink: 0;
+  font-family: var(--mono);
+}
+
+.legend-list dd {
+  margin: 0;
+}
+
+.document-section h4 {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 8px;
+  margin: 0 0 4px;
+  font-size: 0.95rem;
+}
+
+.gap-flag {
+  padding: 1px 8px;
+  border-radius: 999px;
+  font-size: 0.72rem;
+  font-weight: 600;
+}
+
+.gap-flag-blocking {
+  color: var(--blocking);
+  background: var(--blocking-soft);
+}
+
+.gap-flag-advisory {
+  color: var(--advisory);
+  background: var(--advisory-soft);
+}
+
+.gap-notice {
+  margin: 0 0 4px;
+  color: var(--muted);
+  font-size: 0.85rem;
+  font-style: italic;
+}
+
+.document-section ol {
+  margin: 0;
+  padding-left: 22px;
+  display: grid;
+  gap: 4px;
+}
+
+.document-section ol.items {
+  list-style: none;
+  padding-left: 0;
+}
+
+.tag-chip {
+  font-family: var(--mono);
+  font-size: 0.75rem;
+  color: var(--muted);
+}
+
+.tag-confirmed {
+  color: var(--complete);
+}
+
+.tag-proposed {
+  color: var(--suggested);
+}
+
+.open-item {
+  padding-left: 8px;
+  border-left: 3px dashed var(--blocking);
+}
+
+.item-source {
+  color: var(--muted);
+  font-size: 0.8rem;
 }

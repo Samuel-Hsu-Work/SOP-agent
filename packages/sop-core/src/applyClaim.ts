@@ -5,38 +5,25 @@ import {
   type Claim,
   type ClaimStatus,
   type ClaimValue,
-  type ClaimWriteErrorCode,
-  type CreatorType,
   calendarDateSchema,
   type SourceType,
-  totalClaimTextLength,
 } from "./claim.ts";
 import {
-  MAX_CLAIMS,
-  MAX_HISTORY_ENTRIES,
-  MAX_NOTE_LENGTH,
-  MAX_STATEMENT_LENGTH,
-  MAX_TOTAL_CLAIM_TEXT,
-} from "./limits.ts";
-import type { ClaimChange, ClaimHistoryEntry, HistoryReason, SopSession } from "./session.ts";
+  type ApplyClaimResult,
+  agentHistoryEntry,
+  type ClaimWriteError,
+  checkSessionLimits,
+  commit,
+  failure,
+  type SessionChanges,
+  STATUSES_WRITABLE_BY,
+} from "./claimWriteSupport.ts";
+import { MAX_NOTE_LENGTH, MAX_STATEMENT_LENGTH } from "./limits.ts";
+import type { ReviewClaimCommand } from "./reviewClaim.ts";
+import { applyReviewCommand } from "./reviewClaim.ts";
+import type { SopSession } from "./session.ts";
 import type { SopFieldName } from "./sopFields.ts";
 import type { WriteContext } from "./writeContext.ts";
-
-/**
- * Who may write which claim status. This table is the structural form of the product's central
- * promise: the model proposes, and only a person confirms.
- *
- * `conflict` is in no creator's list: only an internal system path (slice 5) may produce it.
- *
- * An honest limit: with no login, the server cannot tell a person from a script. What this table
- * guarantees is that neither the agent nor a document can cause a `confirmed` claim, not that a
- * hand-built request cannot forge a session that already contains one.
- */
-export const STATUSES_WRITABLE_BY: Readonly<Record<CreatorType, readonly ClaimStatus[]>> = {
-  agent: AGENT_WRITABLE_STATUSES,
-  user: ["confirmed", "unknown"],
-  extraction: ["extracted"],
-};
 
 /** Statuses a correction, a mark-unknown or a withdrawal may act on. `conflict` and `extracted` wait for their slices. */
 const STATUSES_AGENT_MAY_CHANGE: readonly ClaimStatus[] = [
@@ -97,24 +84,17 @@ export interface WithdrawClaimCommand {
   sourceMessageId: string;
 }
 
-export type ClaimWriteCommand =
+/** The four commands the agent's tools can build. The model cannot construct a review command. */
+export type AgentClaimCommand =
   | RecordClaimCommand
   | CorrectClaimCommand
   | MarkUnknownCommand
   | WithdrawClaimCommand;
 
-export interface ClaimWriteError {
-  code: ClaimWriteErrorCode;
-  message: string;
-}
+export type ClaimWriteCommand = AgentClaimCommand | ReviewClaimCommand;
 
-export type ApplyClaimResult =
-  | { ok: true; session: SopSession; claim: Claim; change: ClaimChange }
-  | { ok: false; error: ClaimWriteError };
-
-function failure(code: ClaimWriteErrorCode, message: string): ApplyClaimResult {
-  return { ok: false, error: { code, message } };
-}
+export type { ApplyClaimResult, ClaimWriteError };
+export { STATUSES_WRITABLE_BY };
 
 /**
  * Source and authority are derived here, never taken from the caller. A model that could choose
@@ -228,57 +208,6 @@ function isClaimWriteError(result: ValidatedText | ClaimWriteError): result is C
 /** An unknown with no slot in the procedure: it stands for the whole field, not one step. */
 function isFieldLevelUnknown(session: SopSession, claim: Claim): boolean {
   return claim.status === "unknown" && !session.procedureOrder.includes(claim.claimId);
-}
-
-interface SessionChanges {
-  claims: Claim[];
-  procedureOrder: string[];
-  claimHistory: ClaimHistoryEntry[];
-}
-
-/** Refuses a result that would break a session-wide limit. Returns null when it fits. */
-function checkSessionLimits(session: SopSession, changes: SessionChanges): ClaimWriteError | null {
-  if (changes.claims.length > MAX_CLAIMS) {
-    return {
-      code: "session_limit_reached",
-      message: "The session already holds the maximum number of claims.",
-    };
-  }
-  if (changes.claimHistory.length > MAX_HISTORY_ENTRIES) {
-    return { code: "session_limit_reached", message: "The session history is full." };
-  }
-  const isGrowing = totalClaimTextLength(changes.claims) > totalClaimTextLength(session.claims);
-  if (isGrowing && totalClaimTextLength(changes.claims) > MAX_TOTAL_CLAIM_TEXT) {
-    return {
-      code: "session_limit_reached",
-      message: "The session already holds the maximum amount of claim text.",
-    };
-  }
-  return null;
-}
-
-function commit(session: SopSession, changes: SessionChanges, timestamp: string): SopSession {
-  return { ...session, updatedAt: timestamp, ...changes };
-}
-
-function historyEntry(
-  context: WriteContext,
-  timestamp: string,
-  previousClaim: Claim,
-  sourceMessageId: string,
-  reason: HistoryReason,
-  changeNote: string | null = null,
-): ClaimHistoryEntry {
-  return {
-    entryId: context.newId(),
-    claimId: previousClaim.claimId,
-    changedAt: timestamp,
-    changedBy: "agent",
-    sourceMessageId,
-    reason,
-    changeNote,
-    previousClaim,
-  };
 }
 
 function hasUserMessage(session: SopSession, messageId: string): boolean {
@@ -458,7 +387,7 @@ function applyCorrect(
     procedureOrder: needsSlot ? [...session.procedureOrder, claim.claimId] : session.procedureOrder,
     claimHistory: [
       ...session.claimHistory,
-      historyEntry(
+      agentHistoryEntry(
         context,
         timestamp,
         previous,
@@ -471,6 +400,19 @@ function applyCorrect(
   if (limitError !== null) return { ok: false, error: limitError };
 
   return { ok: true, claim, change: "updated", session: commit(session, changes, timestamp) };
+}
+
+/**
+ * A confirmed claim carries a person's verification, so the agent may replace its wording with
+ * `correct_claim` (which visibly drops it to observed) but may not remove it or blank it. The
+ * person withdraws the confirmation in the review panel first. Code enforces this because code
+ * cannot read intent, but it can refuse the destructive commands outright.
+ */
+function refuseToChangeConfirmed(action: "withdrawn" | "marked unknown"): ApplyClaimResult {
+  return failure(
+    "confirmation_required",
+    `This claim is confirmed by the user, so it cannot be ${action} from chat. Tell the user to withdraw the confirmation in the review panel first. If they gave a replacement, use correct_claim.`,
+  );
 }
 
 /**
@@ -503,7 +445,7 @@ function refreshUnknownNote(
     procedureOrder: session.procedureOrder,
     claimHistory: [
       ...session.claimHistory,
-      historyEntry(context, timestamp, existing, command.sourceMessageId, "marked_unknown"),
+      agentHistoryEntry(context, timestamp, existing, command.sourceMessageId, "marked_unknown"),
     ],
   };
   const limitError = checkSessionLimits(session, changes);
@@ -575,6 +517,7 @@ function applyMarkUnknown(
       "There is no active claim with that id in that field.",
     );
   }
+  if (previous.status === "confirmed") return refuseToChangeConfirmed("marked unknown");
   if (previous.status === "unknown") {
     return refreshUnknownNote(session, previous, text.note, command, context);
   }
@@ -603,7 +546,7 @@ function applyMarkUnknown(
     procedureOrder: session.procedureOrder,
     claimHistory: [
       ...session.claimHistory,
-      historyEntry(context, timestamp, previous, command.sourceMessageId, "marked_unknown"),
+      agentHistoryEntry(context, timestamp, previous, command.sourceMessageId, "marked_unknown"),
     ],
   };
   const limitError = checkSessionLimits(session, changes);
@@ -634,6 +577,7 @@ function applyWithdraw(
   if (previous === undefined) {
     return failure("target_claim_not_found", "There is no active claim with that id.");
   }
+  if (previous.status === "confirmed") return refuseToChangeConfirmed("withdrawn");
   if (!STATUSES_AGENT_MAY_CHANGE.includes(previous.status)) {
     return failure(
       "status_transition_not_allowed",
@@ -647,7 +591,14 @@ function applyWithdraw(
     procedureOrder: session.procedureOrder.filter((claimId) => claimId !== previous.claimId),
     claimHistory: [
       ...session.claimHistory,
-      historyEntry(context, timestamp, previous, command.sourceMessageId, "withdrawn", text.note),
+      agentHistoryEntry(
+        context,
+        timestamp,
+        previous,
+        command.sourceMessageId,
+        "withdrawn",
+        text.note,
+      ),
     ],
   };
   const limitError = checkSessionLimits(session, changes);
@@ -691,5 +642,8 @@ export function applyClaim(
       return applyMarkUnknown(session, command, context);
     case "withdraw":
       return applyWithdraw(session, command, context);
+    case "confirm":
+    case "reject":
+      return applyReviewCommand(session, command, context);
   }
 }

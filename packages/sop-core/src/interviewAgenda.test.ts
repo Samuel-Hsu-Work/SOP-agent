@@ -2,9 +2,9 @@ import { describe, expect, it } from "vitest";
 import { applyClaim, type ClaimWriteCommand } from "./applyClaim.ts";
 import {
   buildInterviewAgenda,
-  mentionsQuantity,
   orderProcedureSteps,
   recentQuestions,
+  statesNewQuantity,
 } from "./interviewAgenda.ts";
 import type { SopSession } from "./session.ts";
 import { SOP_FIELD_NAMES, type SopFieldName } from "./sopFields.ts";
@@ -62,6 +62,42 @@ describe("buildInterviewAgenda", () => {
     expect(agenda.readyToReview).toBe(false);
     expect(agenda.blockingGapsRemaining).toBe(8);
     expect(agenda.advisoryGapsRemaining).toBe(5);
+  });
+
+  it("counts how often a field's question was already asked, even when the words differ a little", () => {
+    const { session } = setup();
+    const asked: SopSession = {
+      ...session,
+      messages: [
+        ...session.messages,
+        {
+          id: "a-1",
+          role: "assistant",
+          createdAt: "2026-01-01T00:00:00.000Z",
+          text: "Which situations does this refund process cover, and which does it explicitly not cover?",
+          model: "test-model",
+          toolCalls: [],
+        },
+        {
+          id: "a-2",
+          role: "assistant",
+          createdAt: "2026-01-01T00:00:00.000Z",
+          text: "Thanks. Who approves refunds above $200?",
+          model: "test-model",
+          toolCalls: [],
+        },
+      ],
+    };
+    const agenda = buildInterviewAgenda(asked);
+    const byField = Object.fromEntries(
+      agenda.askNext.map((question) => [question.field, question]),
+    );
+    expect(byField.scope?.timesAskedBefore).toBe(1);
+    expect(byField.purpose?.timesAskedBefore).toBe(0);
+    expect(byField.trigger?.timesAskedBefore).toBe(0);
+    expect(
+      buildInterviewAgenda(session).askNext.map((question) => question.timesAskedBefore),
+    ).toEqual([0, 0, 0]);
   });
 
   it("does not ask about a field once something resolved it, even a proposed claim", () => {
@@ -139,15 +175,39 @@ describe("buildInterviewAgenda", () => {
   });
 });
 
-describe("mentionsQuantity", () => {
+describe("statesNewQuantity", () => {
+  function sessionWith(...texts: { role: "user" | "assistant"; text: string }[]): SopSession {
+    const { session } = setup();
+    return {
+      ...session,
+      messages: texts.map((entry, index) =>
+        entry.role === "user"
+          ? {
+              id: `user-${index}`,
+              role: "user" as const,
+              createdAt: "2026-01-01T00:00:00.000Z",
+              text: entry.text,
+            }
+          : {
+              id: `assistant-${index}`,
+              role: "assistant" as const,
+              createdAt: "2026-01-01T00:00:00.000Z",
+              text: entry.text,
+              model: "test-model",
+              toolCalls: [],
+            },
+      ),
+    };
+  }
+
   it.each([
     "Refunds over $200 need a manager.",
     "We reply within 2 days.",
     "About twenty people are involved.",
     "It is 5%.",
     "Finance handles anything above a thousand.",
-  ])("finds a number in %j", (text) => {
-    expect(mentionsQuantity(text)).toBe(true);
+  ])("finds a number in %j when nothing has been said about it", (text) => {
+    expect(statesNewQuantity(sessionWith({ role: "user", text }))).toBe(true);
   });
 
   it.each([
@@ -155,7 +215,36 @@ describe("mentionsQuantity", () => {
     "No one signs off on it.",
     "We check with one of the leads.",
   ])("finds no number in %j", (text) => {
-    expect(mentionsQuantity(text)).toBe(false);
+    expect(statesNewQuantity(sessionWith({ role: "user", text }))).toBe(false);
+  });
+
+  it("does not count a number the agent already asked about, however it is written", () => {
+    const session = sessionWith(
+      { role: "user", text: "Agents approve up to $1,000." },
+      { role: "assistant", text: "Is the $1,000 limit written policy or habit?" },
+      { role: "user", text: "Sure. Also, the finance director approves refunds above $1000." },
+    );
+    expect(statesNewQuantity(session)).toBe(false);
+  });
+
+  it("counts a different number, even when another one was already discussed", () => {
+    const session = sessionWith(
+      { role: "assistant", text: "Is the $200 limit written policy or habit?" },
+      { role: "user", text: "Correction: the limit is $300, not $200." },
+    );
+    expect(statesNewQuantity(session)).toBe(true);
+  });
+
+  it("looks only at the latest message, and only when it is the user's", () => {
+    expect(
+      statesNewQuantity(
+        sessionWith(
+          { role: "user", text: "Refunds over $200." },
+          { role: "assistant", text: "Why?" },
+        ),
+      ),
+    ).toBe(false);
+    expect(statesNewQuantity(sessionWith())).toBe(false);
   });
 });
 

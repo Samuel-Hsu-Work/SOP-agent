@@ -1,6 +1,13 @@
 "use client";
 
-import type { SopSession } from "@sop-agent/sop-core";
+import {
+  type AdvisoryFieldName,
+  applyClaim,
+  approveSession,
+  type SopSession,
+  setAdvisoryAcknowledgement,
+  systemWriteContext,
+} from "@sop-agent/sop-core";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { runChatTurn } from "./chatTurn.ts";
 import { loadSession, saveSession, startFreshSession } from "./sessionStore.ts";
@@ -18,6 +25,9 @@ export interface SendResult {
   outcome: "committed" | "failed" | "cancelled";
 }
 
+/** A local change to the session: the new session, or a sentence saying why it was refused. */
+type LocalChange = { ok: true; session: SopSession } | { ok: false; message: string };
+
 /**
  * Owns the session for the page. The session lives in the browser tab (sessionStorage) and is
  * replaced only when the API commits a turn, never by provisional text or a failed turn.
@@ -32,30 +42,45 @@ export function useSopSession() {
   const [streamingReply, setStreamingReply] = useState("");
   const [isSending, setIsSending] = useState(false);
   const activeTurn = useRef<AbortController | null>(null);
+  // The latest session and whether a turn is in flight, readable from any callback without waiting
+  // for a render. A review click and a chat commit both build on the session as it is now, so
+  // neither can overwrite the other with an older copy.
+  const sessionRef = useRef<SopSession | null>(null);
+  const isSendingRef = useRef(false);
+
+  const replaceSession = useCallback((next: SopSession) => {
+    sessionRef.current = next;
+    setSession(next);
+  }, []);
+  const markSending = useCallback((value: boolean) => {
+    isSendingRef.current = value;
+    setIsSending(value);
+  }, []);
 
   useEffect(() => {
     const loaded = loadSession();
     if (loaded.status === "loaded") {
-      setSession(loaded.session);
+      replaceSession(loaded.session);
       return;
     }
     const fresh = startFreshSession();
-    setSession(fresh.session);
+    replaceSession(fresh.session);
     if (!fresh.stored) setError(STORAGE_FAILURE_MESSAGE);
     if (loaded.status === "invalid") {
       setNotice("The previous session could not be restored, so a new chat was started.");
     }
-  }, []);
+  }, [replaceSession]);
 
   useEffect(() => () => activeTurn.current?.abort(), []);
 
   const sendMessage = useCallback(
     async (message: string): Promise<SendResult> => {
-      if (session === null || isSending) return { outcome: "cancelled" };
+      const current = sessionRef.current;
+      if (current === null || isSendingRef.current) return { outcome: "cancelled" };
 
       const controller = new AbortController();
       activeTurn.current = controller;
-      setIsSending(true);
+      markSending(true);
       setError(null);
       setNotice(null);
       setPendingMessage(message);
@@ -63,7 +88,7 @@ export function useSopSession() {
 
       const result = await runChatTurn({
         apiBaseUrl: API_BASE_URL,
-        session,
+        session: current,
         message,
         signal: controller.signal,
         onTextDelta: (text) => setStreamingReply((current) => current + text),
@@ -74,7 +99,7 @@ export function useSopSession() {
       if (controller.signal.aborted) return { outcome: "cancelled" };
 
       activeTurn.current = null;
-      setIsSending(false);
+      markSending(false);
       setPendingMessage(null);
       setStreamingReply("");
 
@@ -82,25 +107,99 @@ export function useSopSession() {
         setError(result.message);
         return { outcome: "failed" };
       }
-      setSession(result.session);
+      replaceSession(result.session);
       if (!saveSession(result.session)) setError(STORAGE_FAILURE_MESSAGE);
       return { outcome: "committed" };
     },
-    [session, isSending],
+    [markSending, replaceSession],
+  );
+
+  /**
+   * Applies a change that runs entirely in the browser: a review click, an acknowledgement, the
+   * approval. Refused while a chat turn is in flight, because that turn is building on the current
+   * session and its commit would overwrite the change. Returns whether the session changed.
+   */
+  const applyLocalChange = useCallback(
+    (change: (current: SopSession) => LocalChange): boolean => {
+      const current = sessionRef.current;
+      if (current === null || isSendingRef.current) return false;
+
+      const result = change(current);
+      if (!result.ok) {
+        setError(result.message);
+        return false;
+      }
+      if (result.session === current) return false;
+
+      setError(null);
+      replaceSession(result.session);
+      if (!saveSession(result.session)) setError(STORAGE_FAILURE_MESSAGE);
+      return true;
+    },
+    [replaceSession],
+  );
+
+  const reviewClaim = useCallback(
+    (claimId: string, action: "confirm" | "reject") =>
+      applyLocalChange((current) => {
+        const result = applyClaim(
+          current,
+          { kind: action, createdByType: "user", claimId },
+          systemWriteContext,
+        );
+        return result.ok
+          ? { ok: true, session: result.session }
+          : { ok: false, message: result.error.message };
+      }),
+    [applyLocalChange],
+  );
+  const confirmClaim = useCallback(
+    (claimId: string) => reviewClaim(claimId, "confirm"),
+    [reviewClaim],
+  );
+  const rejectClaim = useCallback(
+    (claimId: string) => reviewClaim(claimId, "reject"),
+    [reviewClaim],
+  );
+
+  const setAcknowledged = useCallback(
+    (field: AdvisoryFieldName, acknowledged: boolean) =>
+      applyLocalChange((current) => {
+        const result = setAdvisoryAcknowledgement(
+          current,
+          { field, acknowledged },
+          systemWriteContext,
+        );
+        return result.ok
+          ? { ok: true, session: result.session }
+          : { ok: false, message: result.error.message };
+      }),
+    [applyLocalChange],
+  );
+
+  const approve = useCallback(
+    () =>
+      applyLocalChange((current) => {
+        const result = approveSession(current, systemWriteContext);
+        return result.ok
+          ? { ok: true, session: result.session }
+          : { ok: false, message: result.error.message };
+      }),
+    [applyLocalChange],
   );
 
   /** One click, no confirmation: cancel any turn in flight and start from an empty session. */
   const startNewChat = useCallback(() => {
     activeTurn.current?.abort();
     activeTurn.current = null;
-    setIsSending(false);
+    markSending(false);
     setPendingMessage(null);
     setStreamingReply("");
     setNotice(null);
     const fresh = startFreshSession();
-    setSession(fresh.session);
+    replaceSession(fresh.session);
     setError(fresh.stored ? null : STORAGE_FAILURE_MESSAGE);
-  }, []);
+  }, [markSending, replaceSession]);
 
   return {
     session,
@@ -111,5 +210,9 @@ export function useSopSession() {
     isSending,
     sendMessage,
     startNewChat,
+    confirmClaim,
+    rejectClaim,
+    setAcknowledged,
+    approve,
   };
 }

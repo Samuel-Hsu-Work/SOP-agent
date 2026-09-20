@@ -210,4 +210,125 @@ describe("buildClaimsView", () => {
 
     expect(viewOf(session, "controls").isSuggestionOnly).toBe(false);
   });
+
+  it("offers the review actions the write path accepts, with an honest name for undoing a confirmation", () => {
+    const { session, apply } = setup();
+    const suggest = (field: SopFieldName, statement: string, status: "observed" | "proposed") =>
+      ({
+        kind: "record",
+        field,
+        status,
+        statement,
+        note: null,
+        effectiveDate: null,
+        insertBeforeClaimId: null,
+      }) as const;
+    const stated = apply(session, suggest("purpose", "Handle refunds.", "observed"));
+    const suggested = apply(stated.session, suggest("controls", "Audit monthly.", "proposed"));
+
+    const observedClaim = viewOf(suggested.session, "purpose").claims[0];
+    expect(observedClaim).toMatchObject({
+      canConfirm: true,
+      canReject: false,
+      rejectLabel: "Reject",
+    });
+    const suggestedClaim = viewOf(suggested.session, "controls").claims[0];
+    expect(suggestedClaim).toMatchObject({
+      canConfirm: true,
+      canReject: true,
+      rejectLabel: "Reject",
+    });
+
+    const confirmed = applyClaim(
+      suggested.session,
+      { kind: "confirm", createdByType: "user", claimId: stated.claim.claimId },
+      createDeterministicContext(),
+    );
+    if (!confirmed.ok) throw new Error("setup failed");
+    const confirmedClaim = viewOf(confirmed.session, "purpose").claims[0];
+    expect(confirmedClaim).toMatchObject({
+      status: "confirmed",
+      statusLabel: "Confirmed",
+      canConfirm: false,
+      canReject: true,
+      rejectLabel: "Withdraw confirmation",
+    });
+  });
+
+  it("shows a confirmation in the history of the claim, with the status it replaced", () => {
+    const { session, record } = setup();
+    const claim = record(session, "purpose", "Handle refunds.");
+    const confirmed = applyClaim(
+      claim.session,
+      { kind: "confirm", createdByType: "user", claimId: claim.claim.claimId },
+      createDeterministicContext(),
+    );
+    if (!confirmed.ok) throw new Error("setup failed");
+    const [shown] = viewOf(confirmed.session, "purpose").claims;
+    expect(shown?.previousVersions).toEqual([
+      expect.objectContaining({
+        reasonLabel: "Confirmed",
+        statusLabel: "Stated by you",
+        text: "Handle refunds.",
+      }),
+    ]);
+  });
+
+  it("keeps the effective date and the status of an earlier version, so a date-only change is visible", () => {
+    const { session, apply } = setup();
+    const dated = apply(session, {
+      kind: "record",
+      field: "authorization",
+      status: "observed",
+      statement: "Managers approve above $300.",
+      note: null,
+      effectiveDate: "2025-03-01",
+      insertBeforeClaimId: null,
+    });
+    const moved = apply(dated.session, {
+      kind: "correct",
+      claimId: dated.claim.claimId,
+      statement: "Managers approve above $300.",
+      note: null,
+      effectiveDate: "2025-06-01",
+    });
+    const [claim] = viewOf(moved.session, "authorization").claims;
+    expect(claim).toMatchObject({
+      text: "Managers approve above $300.",
+      effectiveDate: "2025-06-01",
+    });
+    expect(claim?.previousVersions[0]).toMatchObject({
+      text: "Managers approve above $300.",
+      effectiveDate: "2025-03-01",
+      statusLabel: "Stated by you",
+    });
+  });
+
+  it("shows a rejected suggestion among the removed claims with the reason Rejected", () => {
+    const { session, apply } = setup();
+    const suggested = apply(session, {
+      kind: "record",
+      field: "controls",
+      status: "proposed",
+      statement: "Audit monthly.",
+      note: null,
+      effectiveDate: null,
+      insertBeforeClaimId: null,
+    });
+    const rejected = applyClaim(
+      suggested.session,
+      { kind: "reject", createdByType: "user", claimId: suggested.claim.claimId },
+      createDeterministicContext(),
+    );
+    if (!rejected.ok) throw new Error("setup failed");
+    const view = viewOf(rejected.session, "controls");
+    expect(view.claims).toEqual([]);
+    expect(view.removedClaims).toEqual([
+      expect.objectContaining({
+        reasonLabel: "Rejected",
+        statusLabel: "Suggested by the agent",
+        text: "Audit monthly.",
+      }),
+    ]);
+  });
 });

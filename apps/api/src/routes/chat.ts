@@ -35,6 +35,10 @@ export interface ChatRouteDependencies {
   context: WriteContext;
 }
 
+function countConfirmedClaims(session: SopSession): number {
+  return session.claims.filter((claim) => claim.status === "confirmed").length;
+}
+
 function httpError(
   code: HttpErrorCode,
   message: string,
@@ -211,6 +215,7 @@ export function registerChatRoute(app: FastifyInstance, deps: ChatRouteDependenc
         advisoryGapsAfter: gapsAfter.advisoryGapCount,
         messageCount: committed.messages.length,
         claimCount: committed.claims.length,
+        confirmedClaimCount: countConfirmedClaims(committed),
       });
     } catch (error) {
       const aborted = stream.signal.aborted;
@@ -235,6 +240,7 @@ export function registerChatRoute(app: FastifyInstance, deps: ChatRouteDependenc
         advisoryGapsAfter: null,
         messageCount: startingSession.messages.length,
         claimCount: startingSession.claims.length,
+        confirmedClaimCount: countConfirmedClaims(startingSession),
       });
     }
 

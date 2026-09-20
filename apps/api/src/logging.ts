@@ -58,6 +58,8 @@ export interface ChatTurnLog {
   outputTokens: number;
   messageCount: number;
   claimCount: number;
+  /** How many claims a person has confirmed. The only server-visible trace that review is happening. */
+  confirmedClaimCount: number;
 }
 
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;

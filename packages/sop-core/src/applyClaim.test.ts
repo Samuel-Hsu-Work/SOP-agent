@@ -253,6 +253,41 @@ describe("applyClaim: the agent cannot confirm", () => {
   });
 });
 
+describe("applyClaim: the agent and a confirmed claim", () => {
+  function confirmedSession() {
+    const { context, session, messageId, markUnknown, withdraw, correct } = setup();
+    const claim = buildClaim({
+      claimId: "confirmed-1",
+      field: "purpose",
+      status: "confirmed",
+      source: { type: "employee_statement", reference: { kind: "message", messageId } },
+    });
+    return { context, session: { ...session, claims: [claim] }, markUnknown, withdraw, correct };
+  }
+
+  it("refuses to withdraw or mark unknown a confirmed claim, and says how to proceed", () => {
+    const { context, session, markUnknown, withdraw } = confirmedSession();
+    const withdrawn = applyClaim(session, withdraw("confirmed-1"), context);
+    const blanked = applyClaim(session, markUnknown("purpose", "confirmed-1"), context);
+
+    for (const result of [withdrawn, blanked]) {
+      expectFailure(result, "confirmation_required");
+      expect(!result.ok && result.error.message).toContain("review panel");
+      expect(!result.ok && result.error.message).toContain("correct_claim");
+    }
+  });
+
+  it("still lets the agent correct a confirmed claim, which drops it to observed with history", () => {
+    const { context, session, correct } = confirmedSession();
+    const result = applyClaim(session, correct("confirmed-1"), context);
+    expect(result.ok && result.claim.status).toBe("observed");
+    expect(result.ok && result.session.claimHistory[0]).toMatchObject({
+      reason: "corrected",
+      previousClaim: { status: "confirmed" },
+    });
+  });
+});
+
 describe("applyClaim: an approved session is immutable", () => {
   it("refuses all four commands, and checks this before anything else", () => {
     const { context, session, record, correct, markUnknown, withdraw } = setup();
