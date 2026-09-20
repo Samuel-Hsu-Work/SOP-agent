@@ -4,16 +4,22 @@ import {
   type AdvisoryFieldName,
   applyClaim,
   approveSession,
+  markSopDownloaded,
   type SopSession,
   setAdvisoryAcknowledgement,
+  sopPdfFileName,
   systemWriteContext,
 } from "@sop-agent/sop-core";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { runChatTurn } from "./chatTurn.ts";
+import { requestSopPdf } from "./downloadSopPdf.ts";
+import { saveBlobAsFile } from "./saveBlobAsFile.ts";
 import { loadSession, saveSession, startFreshSession } from "./sessionStore.ts";
 
 const API_BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://localhost:4000";
 
+const DOWNLOAD_START_FAILURE_MESSAGE =
+  "Your browser could not start the download. Try again, or check its download settings.";
 const STORAGE_FAILURE_MESSAGE =
   "Your browser could not store this session. It will be lost if you refresh the page.";
 
@@ -41,7 +47,10 @@ export function useSopSession() {
   const [pendingMessage, setPendingMessage] = useState<string | null>(null);
   const [streamingReply, setStreamingReply] = useState("");
   const [isSending, setIsSending] = useState(false);
+  const [isDownloading, setIsDownloading] = useState(false);
+  const [downloadError, setDownloadError] = useState<string | null>(null);
   const activeTurn = useRef<AbortController | null>(null);
+  const activeDownload = useRef<AbortController | null>(null);
   // The latest session and whether a turn is in flight, readable from any callback without waiting
   // for a render. A review click and a chat commit both build on the session as it is now, so
   // neither can overwrite the other with an older copy.
@@ -71,7 +80,13 @@ export function useSopSession() {
     }
   }, [replaceSession]);
 
-  useEffect(() => () => activeTurn.current?.abort(), []);
+  useEffect(
+    () => () => {
+      activeTurn.current?.abort();
+      activeDownload.current?.abort();
+    },
+    [],
+  );
 
   const sendMessage = useCallback(
     async (message: string): Promise<SendResult> => {
@@ -188,10 +203,58 @@ export function useSopSession() {
     [applyLocalChange],
   );
 
+  /**
+   * Downloads the approved SOP as a PDF. The download is recorded on the session (once, keeping
+   * the first time) only after the browser has started it, so a failed request or a blocked
+   * download never marks the SOP as downloaded.
+   */
+  const downloadPdf = useCallback(async (): Promise<void> => {
+    const current = sessionRef.current;
+    if (current === null || current.status !== "approved" || activeDownload.current !== null) {
+      return;
+    }
+    const controller = new AbortController();
+    activeDownload.current = controller;
+    setIsDownloading(true);
+    setDownloadError(null);
+
+    const result = await requestSopPdf({
+      apiBaseUrl: API_BASE_URL,
+      session: current,
+      signal: controller.signal,
+    });
+
+    // New chat cancelled this download: leave the state alone.
+    if (controller.signal.aborted) return;
+    activeDownload.current = null;
+    setIsDownloading(false);
+
+    if (result.kind === "failed") {
+      setDownloadError(result.message);
+      return;
+    }
+    try {
+      saveBlobAsFile(result.pdf, sopPdfFileName(current.approvedAt ?? ""));
+    } catch {
+      setDownloadError(DOWNLOAD_START_FAILURE_MESSAGE);
+      return;
+    }
+    applyLocalChange((latest) => {
+      const marked = markSopDownloaded(latest, systemWriteContext);
+      return marked.ok
+        ? { ok: true, session: marked.session }
+        : { ok: false, message: marked.error.message };
+    });
+  }, [applyLocalChange]);
+
   /** One click, no confirmation: cancel any turn in flight and start from an empty session. */
   const startNewChat = useCallback(() => {
     activeTurn.current?.abort();
     activeTurn.current = null;
+    activeDownload.current?.abort();
+    activeDownload.current = null;
+    setIsDownloading(false);
+    setDownloadError(null);
     markSending(false);
     setPendingMessage(null);
     setStreamingReply("");
@@ -214,5 +277,8 @@ export function useSopSession() {
     rejectClaim,
     setAcknowledged,
     approve,
+    downloadPdf,
+    isDownloading,
+    downloadError,
   };
 }

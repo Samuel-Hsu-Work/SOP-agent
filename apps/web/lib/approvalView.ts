@@ -22,6 +22,8 @@ export interface UnreviewedSuggestion {
 export interface ApprovalView {
   isApproved: boolean;
   approvedAt: string | null;
+  /** When the PDF download first started. Null until it has, and always null on a draft. */
+  downloadedAt: string | null;
   canApprove: boolean;
   /** Plain sentences, one per thing in the way. Empty when the SOP can be approved or already is. */
   reasons: string[];
@@ -76,6 +78,7 @@ export function buildApprovalView(session: SopSession): ApprovalView {
   return {
     isApproved: session.status === "approved",
     approvedAt: session.approvedAt,
+    downloadedAt: session.downloadedAt,
     canApprove: check.canApprove,
     reasons: session.status === "approved" ? [] : reasons,
     blockingGapLabels,

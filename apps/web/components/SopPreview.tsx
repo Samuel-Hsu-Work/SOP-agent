@@ -1,14 +1,9 @@
-import { buildSopDocument, type SopDocumentItem, type SopSession } from "@sop-agent/sop-core";
-
-const SOURCE_LABELS: Record<SopDocumentItem["sourceType"], string> = {
-  employee_statement: "from the interview",
-  agent_suggestion: "suggested by the assistant",
-};
+import { buildSopDocument, type SopSession } from "@sop-agent/sop-core";
 
 /**
  * The SOP as a document, built only from `buildSopDocument`. It prints every claim with its tag,
- * so a reader can tell a confirmed instruction from a suggestion or an open item. The PDF in
- * slice 4 is built from the same model.
+ * so a reader can tell a confirmed instruction from a suggestion or an open item. The PDF is
+ * built from the same model, and the wording of the gap flags and source lines lives there too.
  */
 export function SopPreview({ session }: { session: SopSession }) {
   const document = buildSopDocument(session);
@@ -39,13 +34,9 @@ export function SopPreview({ session }: { session: SopSession }) {
           <article key={section.field} className="document-section">
             <h4>
               {section.heading}
-              {section.gap === null ? null : (
+              {section.gapLabel === null ? null : (
                 <span className={`gap-flag gap-flag-${section.fieldClass}`}>
-                  {section.fieldClass === "blocking"
-                    ? "blocking gap"
-                    : section.isGapAcknowledged
-                      ? "gap acknowledged"
-                      : "advisory gap"}
+                  {section.gapLabel}
                 </span>
               )}
             </h4>
@@ -64,12 +55,7 @@ export function SopPreview({ session }: { session: SopSession }) {
                     ) : (
                       <span>{item.text}</span>
                     )}
-                    <span className="item-source">
-                      {" "}
-                      {SOURCE_LABELS[item.sourceType]}
-                      {item.effectiveDate === null ? "" : `, effective ${item.effectiveDate}`}
-                      {item.text !== null && item.note !== null ? `, ${item.note}` : ""}
-                    </span>
+                    <span className="item-source"> {item.sourceLine}</span>
                   </li>
                 ))}
               </ol>

@@ -410,6 +410,12 @@ summary.field-row:focus-visible {
   background: var(--advisory-soft);
 }
 
+.status-acknowledged {
+  color: var(--muted);
+  background: transparent;
+  border: 1px solid currentColor;
+}
+
 .visually-hidden {
   position: absolute;
   width: 1px;
@@ -540,6 +546,17 @@ button.link {
   border-radius: 4px;
   color: var(--complete);
   background: var(--complete-soft);
+}
+
+.download-notice {
+  margin: 0;
+  font-size: 0.9rem;
+}
+
+.download-error {
+  margin: 0;
+  color: var(--blocking);
+  font-size: 0.9rem;
 }
 
 .preview-body {

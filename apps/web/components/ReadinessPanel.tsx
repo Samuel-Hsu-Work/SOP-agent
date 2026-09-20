@@ -11,8 +11,9 @@ function statusOf(field: FieldClaimsView): { label: string; className: string } 
     return { label: "Suggested", className: "status-suggested" };
   }
   if (field.gap === null) return { label: "Complete", className: "status-complete" };
-  return field.gap.severity === "blocking"
-    ? { label: "Blocking", className: "status-blocking" }
+  if (field.gap.severity === "blocking") return { label: "Blocking", className: "status-blocking" };
+  return field.isGapAcknowledged
+    ? { label: "Acknowledged", className: "status-acknowledged" }
     : { label: "Advisory", className: "status-advisory" };
 }
 
@@ -143,7 +144,10 @@ export function ReadinessPanel(props: ReadinessPanelProps) {
   const fields = buildClaimsView(session);
   const isLocked = isBusy || session.status === "approved";
   const blockingCount = fields.filter((field) => field.gap?.severity === "blocking").length;
-  const advisoryCount = fields.filter((field) => field.gap?.severity === "advisory").length;
+  const advisoryCount = fields.filter(
+    (field) => field.gap?.severity === "advisory" && !field.isGapAcknowledged,
+  ).length;
+  const acknowledgedCount = fields.filter((field) => field.isGapAcknowledged).length;
   const suggestionOnlyCount = fields.filter((field) => field.isSuggestionOnly).length;
 
   return (
@@ -152,6 +156,12 @@ export function ReadinessPanel(props: ReadinessPanelProps) {
         <h2 id="readiness-heading">Review</h2>
         <p className="summary">
           <strong>{blockingCount}</strong> blocking · <strong>{advisoryCount}</strong> advisory
+          {acknowledgedCount === 0 ? null : (
+            <>
+              {" "}
+              · <strong>{acknowledgedCount}</strong> acknowledged
+            </>
+          )}
           {suggestionOnlyCount === 0 ? null : (
             <>
               {" "}

@@ -70,6 +70,8 @@ export interface FieldClaimsView {
   fieldClass: FieldClass;
   state: FieldState;
   gap: FieldGap | null;
+  /** An advisory gap that the approver has acknowledged. Always false for a blocking one. */
+  isGapAcknowledged: boolean;
   claims: ClaimView[];
   /**
    * True when the field has claims and every one is the agent's own suggestion. Such a field has no
@@ -114,6 +116,10 @@ export function buildClaimsView(session: SopSession): FieldClaimsView[] {
       return firstStep - secondStep;
     });
 
+  const acknowledgedFields = new Set<SopFieldName>(
+    session.advisoryAcknowledgements.map((entry) => entry.field),
+  );
+
   return computeGaps(session).fields.map((readiness) => {
     const claims = orderClaims(session.claims.filter((claim) => claim.field === readiness.field));
     const fieldHistory = session.claimHistory.filter(
@@ -126,6 +132,8 @@ export function buildClaimsView(session: SopSession): FieldClaimsView[] {
       fieldClass: readiness.fieldClass,
       state: readiness.state,
       gap: readiness.gap,
+      isGapAcknowledged:
+        readiness.gap?.severity === "advisory" && acknowledgedFields.has(readiness.field),
       isSuggestionOnly: claims.length > 0 && claims.every((claim) => claim.status === "proposed"),
       claims: claims.map((claim): ClaimView => {
         return {

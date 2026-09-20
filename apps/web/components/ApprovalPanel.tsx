@@ -7,6 +7,10 @@ export interface ApprovalPanelProps {
   isBusy: boolean;
   onAcknowledge: (field: AdvisoryFieldName, acknowledged: boolean) => void;
   onApprove: () => void;
+  /** The PDF is being requested. */
+  isDownloading: boolean;
+  downloadError: string | null;
+  onDownload: () => void;
 }
 
 function formatApprovalTime(iso: string): string {
@@ -19,7 +23,15 @@ function formatApprovalTime(iso: string): string {
  * Approve button. The rules are `checkFinalization` in `sop-core`; this only shows them. Approval
  * is a browser-side action, so what it guarantees is the shape of an approval, not who clicked.
  */
-export function ApprovalPanel({ session, isBusy, onAcknowledge, onApprove }: ApprovalPanelProps) {
+export function ApprovalPanel({
+  session,
+  isBusy,
+  onAcknowledge,
+  onApprove,
+  isDownloading,
+  downloadError,
+  onDownload,
+}: ApprovalPanelProps) {
   const view = buildApprovalView(session);
 
   if (view.isApproved) {
@@ -34,6 +46,24 @@ export function ApprovalPanel({ session, isBusy, onAcknowledge, onApprove }: App
             {view.approvedAt === null ? null : ` on ${formatApprovalTime(view.approvedAt)}`}. The
             SOP can no longer be changed. Start a new chat to write another one.
           </p>
+          {view.downloadedAt === null ? (
+            <p className="download-notice">
+              <strong>Not downloaded yet.</strong> The PDF is the only lasting record: closing this
+              tab or starting a new chat loses this SOP.
+            </p>
+          ) : (
+            <p className="download-notice">
+              PDF downloaded on {formatApprovalTime(view.downloadedAt)}. You can download it again.
+            </p>
+          )}
+          <button type="button" onClick={onDownload} disabled={isDownloading}>
+            {isDownloading ? "Preparing PDF…" : "Download PDF"}
+          </button>
+          {downloadError === null ? null : (
+            <p className="download-error" role="alert">
+              {downloadError}
+            </p>
+          )}
         </div>
       </section>
     );

@@ -4,10 +4,12 @@ import {
   applyClaim,
   approveSession,
   type ClaimWriteCommand,
+  createEmptySession,
   SOP_FIELD_NAMES,
   type SopFieldName,
   type SopSession,
   setAdvisoryAcknowledgement,
+  systemWriteContext,
 } from "@sop-agent/sop-core";
 import {
   createDeterministicContext,
@@ -353,5 +355,321 @@ describe("a turn cancelled by New chat", () => {
     await waitFor(() => expect(screen.getByRole("button", { name: "Send" })).toBeTruthy());
     expect((screen.getByLabelText("Your message") as HTMLTextAreaElement).value).toBe("");
     expect(screen.queryByText("We handle refunds.")).toBeNull();
+  });
+});
+
+/** An SOP that went through the real approval, so the download button appears as it would for a user. */
+function approvedSession(): SopSession {
+  const { context, blockingDone, record, acknowledge } = sessionBuilder();
+  const ready = acknowledge(
+    record(blockingDone(), "controls"),
+    ADVISORY.filter((field) => field !== "controls"),
+  );
+  const approved = approveSession(ready, context);
+  if (!approved.ok) throw new Error("setup failed");
+  return approved.session;
+}
+
+const downloadButton = () => screen.getByRole("button", { name: /Download PDF|Preparing PDF/ });
+
+function pdfResponse(): Response {
+  return new Response(new Blob(["%PDF-1.4 test"], { type: "application/pdf" }), {
+    status: 200,
+    headers: { "content-type": "application/pdf" },
+  });
+}
+
+/** Stands in for the parts of the browser that start a download, and records what they were given. */
+function stubBrowserDownload(options: { clickThrows?: boolean } = {}) {
+  const started: { fileName: string; href: string }[] = [];
+  const revoked: string[] = [];
+  vi.stubGlobal("URL", {
+    ...URL,
+    createObjectURL: () => "blob:sop-test",
+    revokeObjectURL: (url: string) => revoked.push(url),
+  });
+  vi.spyOn(HTMLAnchorElement.prototype, "click").mockImplementation(function (
+    this: HTMLAnchorElement,
+  ) {
+    if (options.clickThrows) throw new Error("blocked");
+    started.push({ fileName: this.download, href: this.href });
+  });
+  return { started, revoked };
+}
+
+/** A `beforeunload` event as the browser sends it, so the test sees whether the page asked to stay. */
+function leavePageWouldBePrevented(): boolean {
+  const event = new Event("beforeunload", { cancelable: true });
+  window.dispatchEvent(event);
+  return event.defaultPrevented;
+}
+
+describe("downloading the approved SOP", () => {
+  it("offers no download on a draft", async () => {
+    const { empty } = sessionBuilder();
+    storeSession(empty);
+    render(<SopWorkspace />);
+    await waitFor(() => expect(approveButton()).toBeTruthy());
+    expect(screen.queryByRole("button", { name: /Download PDF/ })).toBeNull();
+  });
+
+  it("fetches the PDF, starts the download under the fixed file name, and only then records it", async () => {
+    const approved = approvedSession();
+    storeSession(approved);
+    const fetchMock = vi.fn(async () => pdfResponse());
+    vi.stubGlobal("fetch", fetchMock);
+    const browser = stubBrowserDownload();
+    render(<SopWorkspace />);
+    await waitFor(() => expect(downloadButton()).toBeTruthy());
+    expect(screen.getByText(/Not downloaded yet/)).toBeTruthy();
+    expect(storedSession().downloadedAt).toBeNull();
+
+    fireEvent.click(downloadButton());
+
+    await waitFor(() => expect(storedSession().downloadedAt).not.toBeNull());
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    const [url, init] = fetchMock.mock.calls[0] as unknown as [string, RequestInit];
+    expect(url).toMatch(/\/sops\/pdf$/);
+    expect(init.method).toBe("POST");
+    expect(JSON.parse(String(init.body)).session.status).toBe("approved");
+    expect(browser.started).toEqual([
+      { fileName: "standard-operating-procedure-2026-01-01-0000.pdf", href: "blob:sop-test" },
+    ]);
+    await waitFor(() => expect(browser.revoked).toEqual(["blob:sop-test"]));
+    expect(storedSession().claims).toEqual(approved.claims);
+    expect(await screen.findByText(/PDF downloaded on/)).toBeTruthy();
+    expect(screen.queryByText(/Not downloaded yet/)).toBeNull();
+  });
+
+  it("shows Preparing while the request is open, and lets the person download again afterwards", async () => {
+    storeSession(approvedSession());
+    let finishRequest: (response: Response) => void = () => {};
+    const fetchMock = vi.fn(
+      () =>
+        new Promise<Response>((resolve) => {
+          finishRequest = resolve;
+        }),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+    stubBrowserDownload();
+    render(<SopWorkspace />);
+    await waitFor(() => expect(downloadButton()).toBeTruthy());
+
+    fireEvent.click(downloadButton());
+    await waitFor(() => expect(downloadButton().textContent).toBe("Preparing PDF…"));
+    expect((downloadButton() as HTMLButtonElement).disabled).toBe(true);
+
+    await act(async () => finishRequest(pdfResponse()));
+    await waitFor(() => expect(downloadButton().textContent).toBe("Download PDF"));
+    expect((downloadButton() as HTMLButtonElement).disabled).toBe(false);
+  });
+
+  it("keeps the first download time when the SOP is downloaded again", async () => {
+    storeSession(approvedSession());
+    const fetchMock = vi.fn(async () => pdfResponse());
+    vi.stubGlobal("fetch", fetchMock);
+    stubBrowserDownload();
+    render(<SopWorkspace />);
+    await waitFor(() => expect(downloadButton()).toBeTruthy());
+
+    fireEvent.click(downloadButton());
+    await waitFor(() => expect(storedSession().downloadedAt).not.toBeNull());
+    const firstTime = storedSession().downloadedAt;
+
+    fireEvent.click(downloadButton());
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(2));
+    await waitFor(() => expect((downloadButton() as HTMLButtonElement).disabled).toBe(false));
+    expect(storedSession().downloadedAt).toBe(firstTime);
+  });
+
+  it("shows the server's refusal and does not record a download", async () => {
+    storeSession(approvedSession());
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () =>
+        Response.json(
+          { error: { code: "sop_not_approved", message: "This SOP cannot be exported." } },
+          { status: 409 },
+        ),
+      ),
+    );
+    const browser = stubBrowserDownload();
+    render(<SopWorkspace />);
+    await waitFor(() => expect(downloadButton()).toBeTruthy());
+
+    fireEvent.click(downloadButton());
+
+    expect((await screen.findByRole("alert")).textContent).toBe("This SOP cannot be exported.");
+    expect(storedSession().downloadedAt).toBeNull();
+    expect(browser.started).toEqual([]);
+    expect(screen.getByText(/Not downloaded yet/)).toBeTruthy();
+  });
+
+  it("does not record a download the browser refused to start", async () => {
+    storeSession(approvedSession());
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => pdfResponse()),
+    );
+    stubBrowserDownload({ clickThrows: true });
+    render(<SopWorkspace />);
+    await waitFor(() => expect(downloadButton()).toBeTruthy());
+
+    fireEvent.click(downloadButton());
+
+    expect((await screen.findByRole("alert")).textContent).toContain(
+      "could not start the download",
+    );
+    expect(storedSession().downloadedAt).toBeNull();
+  });
+
+  it("keeps the recorded download on screen when the session cannot be saved, and warns", async () => {
+    const storage = installCountingStorage();
+    storeSession(approvedSession());
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => pdfResponse()),
+    );
+    stubBrowserDownload();
+    render(<SopWorkspace />);
+    await waitFor(() => expect(downloadButton()).toBeTruthy());
+
+    storage.failOnWrite = true;
+    fireEvent.click(downloadButton());
+
+    expect(await screen.findByText(/PDF downloaded on/)).toBeTruthy();
+    expect((await screen.findByRole("alert")).textContent).toContain(
+      "could not store this session",
+    );
+  });
+
+  it("cancels a download in progress when New chat starts, and records nothing on the new chat", async () => {
+    storeSession(approvedSession());
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(
+        (_url: string, init?: RequestInit) =>
+          new Promise((_resolve, reject) => {
+            init?.signal?.addEventListener("abort", () =>
+              reject(new DOMException("Aborted", "AbortError")),
+            );
+          }),
+      ),
+    );
+    const browser = stubBrowserDownload();
+    render(<SopWorkspace />);
+    await waitFor(() => expect(downloadButton()).toBeTruthy());
+    fireEvent.click(downloadButton());
+    await waitFor(() => expect(downloadButton().textContent).toBe("Preparing PDF…"));
+
+    fireEvent.click(screen.getByRole("button", { name: "New chat" }));
+
+    await waitFor(() => expect(storedSession().status).toBe("draft"));
+    expect(storedSession().downloadedAt).toBeNull();
+    expect(browser.started).toEqual([]);
+    expect(screen.queryByRole("alert")).toBeNull();
+  });
+});
+
+describe("leaving the page", () => {
+  it("asks the browser to confirm only while work would be lost", async () => {
+    storeSession(createEmptySession(systemWriteContext));
+    const { unmount } = render(<SopWorkspace />);
+    await waitFor(() => expect(approveButton()).toBeTruthy());
+    expect(leavePageWouldBePrevented()).toBe(false);
+    unmount();
+    cleanup();
+
+    storeSession(approvedSession());
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => pdfResponse()),
+    );
+    stubBrowserDownload();
+    render(<SopWorkspace />);
+    await waitFor(() => expect(downloadButton()).toBeTruthy());
+    expect(leavePageWouldBePrevented()).toBe(true);
+
+    fireEvent.click(downloadButton());
+    await waitFor(() => expect(storedSession().downloadedAt).not.toBeNull());
+    await waitFor(() => expect(leavePageWouldBePrevented()).toBe(false));
+  });
+
+  it("asks while a draft holds something, and stops asking once the listener's owner unmounts", async () => {
+    const { record, empty } = sessionBuilder();
+    storeSession(record(empty, "purpose"));
+    const { unmount } = render(<SopWorkspace />);
+    await waitFor(() => expect(screen.getByRole("button", { name: "Confirm" })).toBeTruthy());
+    expect(leavePageWouldBePrevented()).toBe(true);
+
+    unmount();
+    expect(leavePageWouldBePrevented()).toBe(false);
+  });
+
+  it("does not put a confirmation in front of New chat, even for an SOP that was never downloaded", async () => {
+    const confirmSpy = vi.fn(() => false);
+    vi.stubGlobal("confirm", confirmSpy);
+    storeSession(approvedSession());
+    render(<SopWorkspace />);
+    await waitFor(() => expect(downloadButton()).toBeTruthy());
+
+    fireEvent.click(screen.getByRole("button", { name: "New chat" }));
+
+    await waitFor(() => expect(storedSession().status).toBe("draft"));
+    expect(confirmSpy).not.toHaveBeenCalled();
+    expect(storedSession().downloadedAt).toBeNull();
+  });
+});
+
+describe("acknowledged advisory gaps", () => {
+  it("changes the chip to Acknowledged and splits the header count when a gap is ticked", async () => {
+    const { blockingDone } = sessionBuilder();
+    storeSession(blockingDone());
+    render(<SopWorkspace />);
+    await waitFor(() => expect(approveButton()).toBeTruthy());
+
+    const summary = () => document.querySelector("#readiness-heading + .summary")?.textContent;
+    const exceptionsRow = () => {
+      const row = screen.getByText("Exceptions", { selector: ".field-label" }).closest("li");
+      if (row === null) throw new Error("no Exceptions field");
+      return row;
+    };
+    expect(summary()).toBe("0 blocking · 5 advisory");
+    expect(within(exceptionsRow()).getByText("Advisory")).toBeTruthy();
+
+    fireEvent.click(screen.getByRole("checkbox", { name: "Exceptions" }));
+
+    await waitFor(() => expect(within(exceptionsRow()).getByText("Acknowledged")).toBeTruthy());
+    expect(summary()).toBe("0 blocking · 4 advisory · 1 acknowledged");
+  });
+});
+
+describe("the SOP preview's source line", () => {
+  it("shows a suggestion's own note once, not after the generic label", async () => {
+    const { blockingDone } = sessionBuilder();
+    const stated = blockingDone();
+    const result = applyClaim(
+      stated,
+      {
+        kind: "record",
+        createdByType: "agent",
+        field: "controls",
+        status: "proposed",
+        statement: "Audit the refunds monthly.",
+        note: "Suggested by the interviewer at the user's request.",
+        effectiveDate: null,
+        sourceMessageId: stated.messages[0]?.id ?? "",
+        insertBeforeClaimId: null,
+      },
+      createDeterministicContext(),
+    );
+    if (!result.ok) throw new Error("setup failed");
+    storeSession(result.session);
+    render(<SopWorkspace />);
+    fireEvent.click(await screen.findByRole("tab", { name: "SOP preview" }));
+
+    const line = await screen.findByText("Suggested by the interviewer at the user's request.");
+    expect(line.textContent?.trim()).toBe("Suggested by the interviewer at the user's request.");
+    expect(screen.queryByText(/suggested by the assistant, Suggested/)).toBeNull();
   });
 });

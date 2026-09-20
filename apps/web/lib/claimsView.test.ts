@@ -3,6 +3,7 @@ import {
   type ClaimWriteCommand,
   type SopFieldName,
   type SopSession,
+  setAdvisoryAcknowledgement,
 } from "@sop-agent/sop-core";
 import {
   createDeterministicContext,
@@ -330,5 +331,35 @@ describe("buildClaimsView", () => {
         text: "Audit monthly.",
       }),
     ]);
+  });
+});
+
+describe("buildClaimsView acknowledgement", () => {
+  it("marks an advisory gap as acknowledged only while its acknowledgement stands", () => {
+    const { session } = setup();
+    const context = createDeterministicContext();
+    const acknowledged = setAdvisoryAcknowledgement(
+      session,
+      { field: "exceptions", acknowledged: true },
+      context,
+    );
+    if (!acknowledged.ok) throw new Error("setup failed");
+
+    expect(viewOf(acknowledged.session, "exceptions").isGapAcknowledged).toBe(true);
+    expect(viewOf(acknowledged.session, "evidence").isGapAcknowledged).toBe(false);
+    expect(viewOf(session, "exceptions").isGapAcknowledged).toBe(false);
+  });
+
+  it("is never true for a blocking field, or for an advisory field that has no gap", () => {
+    const { session, record } = setup();
+    const withControls = record(session, "controls", "Audit monthly.").session;
+    const forced = {
+      ...withControls,
+      advisoryAcknowledgements: [
+        { field: "controls" as const, acknowledgedAt: "2026-01-01T00:00:00.000Z" },
+      ],
+    };
+    expect(viewOf(forced, "controls").isGapAcknowledged).toBe(false);
+    expect(viewOf(forced, "purpose").isGapAcknowledged).toBe(false);
   });
 });

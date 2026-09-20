@@ -1,6 +1,8 @@
 "use client";
 
 import { useRef, useState } from "react";
+import { wouldLoseWork } from "../lib/unsavedWork.ts";
+import { useLeavePageWarning } from "../lib/useLeavePageWarning.ts";
 import { useSopSession } from "../lib/useSopSession.ts";
 import { ApprovalPanel } from "./ApprovalPanel.tsx";
 import { ChatPanel } from "./ChatPanel.tsx";
@@ -23,7 +25,11 @@ export function SopWorkspace() {
     rejectClaim,
     setAcknowledged,
     approve,
+    downloadPdf,
+    isDownloading,
+    downloadError,
   } = useSopSession();
+  useLeavePageWarning(session !== null && wouldLoseWork(session, isSending));
   const [sideView, setSideView] = useState<SideView>("review");
   const composerRef = useRef<HTMLTextAreaElement | null>(null);
 
@@ -105,6 +111,9 @@ export function SopWorkspace() {
                     isBusy={isSending}
                     onAcknowledge={setAcknowledged}
                     onApprove={approve}
+                    isDownloading={isDownloading}
+                    downloadError={downloadError}
+                    onDownload={downloadPdf}
                   />
                 </>
               ) : (
