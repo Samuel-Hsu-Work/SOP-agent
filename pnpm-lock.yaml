@@ -32,6 +32,9 @@ importers:
       openai:
         specifier: ^7.19.0
         version: 7.19.0(ws@8.21.3)(zod@4.6.5)
+      pdfkit:
+        specifier: ^0.20.2
+        version: 0.20.2
       pino:
         specifier: ^10.3.1
         version: 10.3.1
@@ -39,6 +42,12 @@ importers:
         specifier: ^4.6.5
         version: 4.6.5
     devDependencies:
+      '@types/pdfkit':
+        specifier: ^0.17.6
+        version: 0.17.6
+      pdfjs-dist:
+        specifier: ^6.3.289
+        version: 6.3.289
       tsx:
         specifier: ^4.23.13
         version: 4.23.13

@@ -73,6 +73,30 @@ export function checkFinalization(session: SopSession): FinalizationCheck {
   };
 }
 
+/** Why an SOP cannot be exported as a PDF. The reason is for the log, never shown to a caller. */
+export type SopExportRefusalReason =
+  | "not_approved"
+  | "blocking_gap"
+  | "advisory_gap_not_acknowledged"
+  | "unreviewed_suggestion";
+
+export type SopExportCheck = { ok: true } | { ok: false; reason: SopExportRefusalReason };
+
+/**
+ * May this session be exported? The PDF endpoint calls it on every request and never trusts the
+ * session's own `status`: a forged session can claim to be approved. It needs the session to say
+ * approved and the content to satisfy every approval requirement.
+ *
+ * It cannot ask `checkFinalization` for `canApprove`, because that is false for every approved
+ * session (`already_approved` is always a blocker). It reads the other three blockers instead.
+ */
+export function canExportApprovedSop(session: SopSession): SopExportCheck {
+  if (session.status !== "approved") return { ok: false, reason: "not_approved" };
+  const check = checkFinalization(session);
+  const otherBlocker = check.blockers.find((blocker) => blocker !== "already_approved");
+  return otherBlocker === undefined ? { ok: true } : { ok: false, reason: otherBlocker };
+}
+
 export const ACKNOWLEDGEMENT_ERROR_CODES = [
   "session_approved",
   "not_an_advisory_field",

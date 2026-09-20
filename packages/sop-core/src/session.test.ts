@@ -146,10 +146,11 @@ describe("sopSessionSchema", () => {
     expect((parsed.claims as Record<string, unknown>[])[0]?.injected).toBeUndefined();
   });
 
-  it("rejects a stored version-1 or version-2 session, and other wrong versions and malformed timestamps", () => {
+  it("rejects a stored version-1, 2 or 3 session, and other wrong versions and malformed timestamps", () => {
     const session = createEmptySession(createDeterministicContext());
     expect(sopSessionSchema.safeParse({ ...session, schemaVersion: 1 }).success).toBe(false);
     expect(sopSessionSchema.safeParse({ ...session, schemaVersion: 2 }).success).toBe(false);
+    expect(sopSessionSchema.safeParse({ ...session, schemaVersion: 3 }).success).toBe(false);
     expect(sopSessionSchema.safeParse({ ...session, createdAt: "yesterday" }).success).toBe(false);
   });
 
@@ -290,6 +291,24 @@ describe("sopSessionSchema", () => {
       expect(
         sopSessionSchema.safeParse({ ...draft, status: "draft", approvedAt: at }).success,
       ).toBe(false);
+    });
+
+    it("keeps the download time null on a draft and lets an approved session have one or not", () => {
+      const draft = empty();
+      const at = "2026-01-02T00:00:00.000Z";
+      const approved = { ...draft, status: "approved" as const, approvedAt: at };
+      expect(draft.downloadedAt).toBeNull();
+      expect(sopSessionSchema.safeParse({ ...draft, downloadedAt: at }).success).toBe(false);
+      expect(sopSessionSchema.safeParse({ ...approved, downloadedAt: null }).success).toBe(true);
+      expect(sopSessionSchema.safeParse({ ...approved, downloadedAt: at }).success).toBe(true);
+      expect(sopSessionSchema.safeParse({ ...approved, downloadedAt: "later" }).success).toBe(
+        false,
+      );
+    });
+
+    it("requires the download time, so a session without the field is not accepted", () => {
+      const { downloadedAt: _omitted, ...withoutField } = empty();
+      expect(sopSessionSchema.safeParse(withoutField).success).toBe(false);
     });
 
     it("accepts one acknowledgement per advisory field, and nothing else", () => {

@@ -16,28 +16,27 @@ export type {
   ApproveSessionResult,
   FinalizationCheck,
   SetAcknowledgementResult,
+  SopExportCheck,
+  SopExportRefusalReason,
 } from "./approval.ts";
 export {
   ACKNOWLEDGEMENT_ERROR_CODES,
   APPROVAL_BLOCKERS,
   APPROVAL_ERROR_CODES,
   approveSession,
+  canExportApprovedSop,
   checkFinalization,
   setAdvisoryAcknowledgement,
 } from "./approval.ts";
 export type {
-  ChatHttpError,
   ChatRequest,
   ChatStreamEvent,
-  HttpErrorCode,
   StreamErrorCode,
 } from "./chatWire.ts";
 export {
-  chatHttpErrorSchema,
   chatRequestSchema,
   chatStreamEventSchema,
   encodeChatStreamEvent,
-  HTTP_ERROR_CODES,
   STREAM_ERROR_CODES,
 } from "./chatWire.ts";
 export type {
@@ -69,6 +68,10 @@ export type {
   GapReport,
 } from "./computeGaps.ts";
 export { computeGaps } from "./computeGaps.ts";
+export type { MarkDownloadedResult } from "./download.ts";
+export { markSopDownloaded } from "./download.ts";
+export type { HttpError, HttpErrorCode } from "./httpWire.ts";
+export { HTTP_ERROR_CODES, httpErrorSchema } from "./httpWire.ts";
 export type {
   AgendaExclusion,
   AgendaQuestion,
@@ -83,6 +86,8 @@ export {
   statesNewQuantity,
 } from "./interviewAgenda.ts";
 export * from "./limits.ts";
+export type { SopPdfRequest } from "./pdfWire.ts";
+export { SOP_PDF_MEDIA_TYPE, sopPdfFileName, sopPdfRequestSchema } from "./pdfWire.ts";
 export type { ReviewClaimCommand } from "./reviewClaim.ts";
 export { REJECTED_NOTE, reviewActionsFor } from "./reviewClaim.ts";
 export type {
@@ -115,7 +120,12 @@ export {
   TOOL_OUTCOME_ERROR_CODES,
   WITHDRAW_CLAIM_TOOL_NAME,
 } from "./session.ts";
-export type { SopDocument, SopDocumentItem, SopDocumentSection } from "./sopDocument.ts";
+export type {
+  GapLabel,
+  SopDocument,
+  SopDocumentItem,
+  SopDocumentSection,
+} from "./sopDocument.ts";
 export {
   buildSopDocument,
   PROVENANCE_TAGS,

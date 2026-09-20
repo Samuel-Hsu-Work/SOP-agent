@@ -1,6 +1,11 @@
 import { describe, expect, it } from "vitest";
 import { applyClaim, type ClaimWriteCommand } from "./applyClaim.ts";
-import { approveSession, checkFinalization, setAdvisoryAcknowledgement } from "./approval.ts";
+import {
+  approveSession,
+  canExportApprovedSop,
+  checkFinalization,
+  setAdvisoryAcknowledgement,
+} from "./approval.ts";
 import { type SopSession, sopSessionSchema } from "./session.ts";
 import {
   ADVISORY_FIELD_NAMES,
@@ -331,5 +336,55 @@ describe("approveSession", () => {
     );
     expect(approveSession(frozen, context).ok).toBe(true);
     expect(frozen.status).toBe("draft");
+  });
+});
+
+describe("canExportApprovedSop", () => {
+  const forgeApproved = (session: SopSession): SopSession => ({
+    ...session,
+    status: "approved",
+    approvedAt: "2026-01-02T00:00:00.000Z",
+  });
+
+  it("refuses a draft, even one that is ready to approve", () => {
+    const { session, withBlockingDone, acknowledgeAll } = setup();
+    expect(canExportApprovedSop(session)).toEqual({ ok: false, reason: "not_approved" });
+    const ready = acknowledgeAll(withBlockingDone());
+    expect(checkFinalization(ready).canApprove).toBe(true);
+    expect(canExportApprovedSop(ready)).toEqual({ ok: false, reason: "not_approved" });
+  });
+
+  it("accepts a session that was properly approved, although canApprove is false for it", () => {
+    const { context, withBlockingDone, acknowledgeAll } = setup();
+    const approved = approveSession(acknowledgeAll(withBlockingDone()), context);
+    if (!approved.ok) throw new Error("setup failed");
+
+    expect(checkFinalization(approved.session).canApprove).toBe(false);
+    expect(canExportApprovedSop(approved.session)).toEqual({ ok: true });
+  });
+
+  it("does not trust a session that only says it is approved", () => {
+    const { session, withBlockingDone, acknowledgeAll, acknowledge, record } = setup();
+
+    expect(canExportApprovedSop(forgeApproved(session))).toEqual({
+      ok: false,
+      reason: "blocking_gap",
+    });
+    expect(canExportApprovedSop(forgeApproved(withBlockingDone()))).toEqual({
+      ok: false,
+      reason: "advisory_gap_not_acknowledged",
+    });
+
+    const ready = acknowledgeAll(withBlockingDone());
+    expect(canExportApprovedSop(forgeApproved(ready))).toEqual({ ok: true });
+    const withSuggestion = acknowledge(
+      record(withBlockingDone(), "controls", "proposed").session,
+      "exceptions",
+    );
+    const everyGapAcknowledged = acknowledgeAll(withSuggestion);
+    expect(canExportApprovedSop(forgeApproved(everyGapAcknowledged))).toEqual({
+      ok: false,
+      reason: "unreviewed_suggestion",
+    });
   });
 });

@@ -9,6 +9,7 @@ import Fastify, {
 import pino from "pino";
 import type { ModelClient } from "./model/modelClient.ts";
 import { registerChatRoute } from "./routes/chat.ts";
+import { registerSopPdfRoute } from "./routes/sopPdf.ts";
 
 /**
  * One megabyte. A session is bounded by its own schema, and slice 5 will need to raise this along
@@ -30,6 +31,8 @@ export interface ServerDependencies {
 const ERROR_MESSAGES: Record<HttpErrorCode, string> = {
   invalid_request: "The request is not valid.",
   session_approved: "The SOP is approved, so the chat is read-only.",
+  sop_not_approved:
+    "This SOP cannot be exported. It must be approved, with every gap and suggestion resolved.",
   payload_too_large: "The request is too large.",
   unsupported_media_type: "The request must be JSON.",
   internal_error: "Something went wrong on the server.",
@@ -91,6 +94,8 @@ export async function buildServer(deps: ServerDependencies): Promise<FastifyInst
     models: deps.models,
     context: deps.context ?? systemWriteContext,
   });
+
+  registerSopPdfRoute(app);
 
   return app;
 }

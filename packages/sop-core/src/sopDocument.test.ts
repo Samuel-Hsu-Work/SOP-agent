@@ -256,6 +256,89 @@ describe("buildSopDocument", () => {
     expect(sectionOf(document, "purpose")).toMatchObject({ isGapAcknowledged: false });
   });
 
+  describe("source line", () => {
+    const lineOf = (claims: Claim[], field: SopFieldName) => {
+      const { session } = setup();
+      return sectionOf(buildSopDocument({ ...session, claims }), field).items.map(
+        (item) => item.sourceLine,
+      );
+    };
+    const suggestion = (overrides: Partial<Claim>): Claim =>
+      buildClaim({
+        claimId: "s",
+        field: "controls",
+        status: "proposed",
+        authority: "proposed",
+        source: {
+          type: "agent_suggestion",
+          reference: { kind: "message", messageId: "message-1" },
+        },
+        ...overrides,
+      });
+
+    it("says where a statement came from, then its date, then its note", () => {
+      const plain = buildClaim({ claimId: "a", field: "controls" });
+      const dated = buildClaim({ claimId: "b", field: "controls", effectiveDate: "2026-01-01" });
+      const noted = buildClaim({
+        claimId: "c",
+        field: "controls",
+        effectiveDate: "2026-01-01",
+        note: "Per the 2026 policy.",
+      });
+      expect(lineOf([plain, dated, noted], "controls")).toEqual([
+        "from the interview",
+        "from the interview, effective 2026-01-01",
+        "from the interview, effective 2026-01-01, Per the 2026 policy.",
+      ]);
+    });
+
+    it("uses a suggestion's note instead of repeating who suggested it", () => {
+      const withNote = suggestion({ note: "Suggested by the interviewer at the user's request." });
+      const withoutNote = suggestion({ claimId: "t" });
+      const datedWithNote = suggestion({
+        claimId: "u",
+        note: "Suggested at the user's request.",
+        effectiveDate: "2026-02-01",
+      });
+      expect(lineOf([withNote, withoutNote, datedWithNote], "controls")).toEqual([
+        "Suggested by the interviewer at the user's request.",
+        "suggested by the assistant",
+        "Suggested at the user's request., effective 2026-02-01",
+      ]);
+      expect(lineOf([withNote], "controls")[0]).not.toContain("suggested by the assistant");
+    });
+
+    it("does not repeat an unknown item's note, which is its open-item text", () => {
+      const unknown = buildClaim({
+        claimId: "k",
+        field: "controls",
+        status: "unknown",
+        note: "Who checks the order.",
+      });
+      expect(lineOf([unknown], "controls")).toEqual(["from the interview"]);
+    });
+  });
+
+  it("labels a gap for the preview and the PDF: blocking, advisory, or acknowledged", () => {
+    const { context, session, record } = setup();
+    const empty = buildSopDocument(session);
+    expect(sectionOf(empty, "purpose").gapLabel).toBe("blocking gap");
+    expect(sectionOf(empty, "exceptions").gapLabel).toBe("advisory gap");
+
+    const withPurpose = record(session, "purpose", "Handle refunds.").session;
+    expect(sectionOf(buildSopDocument(withPurpose), "purpose").gapLabel).toBeNull();
+
+    const acknowledged = setAdvisoryAcknowledgement(
+      withPurpose,
+      { field: "exceptions", acknowledged: true },
+      context,
+    );
+    if (!acknowledged.ok) throw new Error("setup failed");
+    expect(sectionOf(buildSopDocument(acknowledged.session), "exceptions").gapLabel).toBe(
+      "gap acknowledged",
+    );
+  });
+
   it("is pure: the same session gives the same document, and the input is untouched", () => {
     const { session, record } = setup();
     const frozen = deepFreeze(

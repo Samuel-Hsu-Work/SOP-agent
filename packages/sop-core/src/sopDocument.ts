@@ -1,4 +1,10 @@
-import { CLAIM_STATUSES, type ClaimStatus, type SourceType, UNRESOLVED_STATUSES } from "./claim.ts";
+import {
+  CLAIM_STATUSES,
+  type Claim,
+  type ClaimStatus,
+  type SourceType,
+  UNRESOLVED_STATUSES,
+} from "./claim.ts";
 import { computeGaps, type FieldGap } from "./computeGaps.ts";
 import type { SessionStatus, SopSession } from "./session.ts";
 import { type FieldClass, SOP_FIELDS, type SopFieldName } from "./sopFields.ts";
@@ -29,6 +35,8 @@ const PROVENANCE_MEANINGS: Readonly<Record<ClaimStatus, string>> = {
   extracted: "Read from a document and not checked yet. An open item, not an instruction.",
 };
 
+export type GapLabel = "blocking gap" | "advisory gap" | "gap acknowledged";
+
 export interface SopDocumentItem {
   claimId: string;
   /** 1-based step number for a procedure step, otherwise null. */
@@ -40,6 +48,11 @@ export interface SopDocumentItem {
   sourceType: SourceType;
   note: string | null;
   effectiveDate: string | null;
+  /**
+   * Where the item came from, worded once here so the preview and the PDF say the same thing.
+   * An unknown item's note is its open-item text, so it is never repeated in this line.
+   */
+  sourceLine: string;
   /** True for unknown, conflict and extracted: an open item that must not read as an instruction. */
   isUnresolved: boolean;
 }
@@ -51,6 +64,8 @@ export interface SopDocumentSection {
   gap: FieldGap | null;
   /** A plain sentence for a section that is empty or still open. Null when there is no gap. */
   gapNotice: string | null;
+  /** The short flag printed beside the heading. Null when there is no gap. */
+  gapLabel: GapLabel | null;
   /** An advisory gap that the approver acknowledged. Always false for a blocking one. */
   isGapAcknowledged: boolean;
   items: SopDocumentItem[];
@@ -80,6 +95,34 @@ function gapNoticeFor(gap: FieldGap | null): string | null {
     : "Part of this section is still open.";
 }
 
+function gapLabelFor(gap: FieldGap | null, isAcknowledged: boolean): GapLabel | null {
+  if (gap === null) return null;
+  if (gap.severity === "blocking") return "blocking gap";
+  return isAcknowledged ? "gap acknowledged" : "advisory gap";
+}
+
+const SOURCE_LABELS: Readonly<Record<SourceType, string>> = {
+  employee_statement: "from the interview",
+  agent_suggestion: "suggested by the assistant",
+};
+
+/**
+ * A suggestion's note already says who suggested it and why, so it replaces the generic label
+ * instead of following it (which used to print the same sentence twice). A statement keeps its
+ * label and appends the note. Decided by the claim's shape, never by comparing text.
+ */
+function sourceLineFor(claim: Claim): string {
+  const hasText = claim.value !== null;
+  const noteReplacesLabel =
+    claim.source.type === "agent_suggestion" && hasText && claim.note !== null;
+  const parts = [noteReplacesLabel ? claim.note : SOURCE_LABELS[claim.source.type]];
+  if (claim.effectiveDate !== null) parts.push(`effective ${claim.effectiveDate}`);
+  if (claim.source.type === "employee_statement" && hasText && claim.note !== null) {
+    parts.push(claim.note);
+  }
+  return parts.join(", ");
+}
+
 /**
  * Turns the claims into the document that the on-screen preview shows and that slice 4's PDF will
  * print. Pure and clock-free, so it renders the same every time, and the preview and the PDF
@@ -98,6 +141,10 @@ export function buildSopDocument(session: SopSession): SopDocument {
   const sections = SOP_FIELDS.map((definition): SopDocumentSection => {
     const readiness = report.fields.find((entry) => entry.field === definition.name);
     const gap = readiness?.gap ?? null;
+
+    const isGapAcknowledged =
+      gap?.severity === "advisory" &&
+      (acknowledged as ReadonlySet<SopFieldName>).has(definition.name);
 
     const fieldClaims = session.claims.filter((claim) => claim.field === definition.name);
     // A procedure reads in step order. A whole-procedure unknown has no slot, so it goes last.
@@ -118,9 +165,8 @@ export function buildSopDocument(session: SopSession): SopDocument {
       fieldClass: definition.fieldClass,
       gap,
       gapNotice: gapNoticeFor(gap),
-      isGapAcknowledged:
-        gap?.severity === "advisory" &&
-        (acknowledged as ReadonlySet<SopFieldName>).has(definition.name),
+      gapLabel: gapLabelFor(gap, isGapAcknowledged),
+      isGapAcknowledged,
       items: ordered.map(
         (claim): SopDocumentItem => ({
           claimId: claim.claimId,
@@ -131,6 +177,7 @@ export function buildSopDocument(session: SopSession): SopDocument {
           sourceType: claim.source.type,
           note: claim.note,
           effectiveDate: claim.effectiveDate,
+          sourceLine: sourceLineFor(claim),
           isUnresolved: (UNRESOLVED_STATUSES as readonly ClaimStatus[]).includes(claim.status),
         }),
       ),

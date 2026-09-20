@@ -1,4 +1,4 @@
-import { chatHttpErrorSchema, chatStreamEventSchema, type SopSession } from "@sop-agent/sop-core";
+import { chatStreamEventSchema, httpErrorSchema, type SopSession } from "@sop-agent/sop-core";
 import { NdjsonLineSplitter } from "./ndjson.ts";
 
 export type ChatTurnResult =
@@ -28,7 +28,7 @@ function failed(message: string, retryable = true): ChatTurnResult {
 
 async function readErrorMessage(response: Response): Promise<string> {
   try {
-    const parsed = chatHttpErrorSchema.safeParse(await response.json());
+    const parsed = httpErrorSchema.safeParse(await response.json());
     if (parsed.success) return parsed.data.error.message;
   } catch {
     // Fall through to the generic message.

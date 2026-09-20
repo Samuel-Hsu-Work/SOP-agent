@@ -158,8 +158,9 @@ export type SessionStatus = (typeof SESSION_STATUSES)[number];
 /**
  * Version 2 added claim `updatedAt`, step values, `procedureOrder`, and the richer history.
  * Version 3 added the approval time, the advisory-gap acknowledgements, and review history entries.
+ * Version 4 added the download time of the approved SOP's PDF.
  */
-export const SESSION_SCHEMA_VERSION = 3;
+export const SESSION_SCHEMA_VERSION = 4;
 
 /** A person's statement that they saw an advisory gap and accept it. It carries no free text. */
 export const advisoryAcknowledgementSchema = z.object({
@@ -197,6 +198,12 @@ export const sopSessionSchema = z
     claimHistory: z.array(claimHistoryEntrySchema).max(MAX_HISTORY_ENTRIES),
     /** Null while a draft, and set with the status when the SOP is approved. */
     approvedAt: timestampSchema.nullable(),
+    /**
+     * When the browser first received the approved SOP's PDF and started the download. Null until
+     * then, and always null on a draft. It records the export, not the SOP, and (like the rest of
+     * the session) dies with the tab.
+     */
+    downloadedAt: timestampSchema.nullable(),
     /** At most one per advisory field. Cleared by any change to a claim. */
     advisoryAcknowledgements: z
       .array(advisoryAcknowledgementSchema)
@@ -263,6 +270,9 @@ export const sopSessionSchema = z
     if ((session.approvedAt !== null) !== (session.status === "approved")) {
       addIssue("An approved session has an approval time, and a draft has none.", ["approvedAt"]);
     }
+    if (session.downloadedAt !== null && session.status !== "approved") {
+      addIssue("Only an approved session can have been downloaded.", ["downloadedAt"]);
+    }
     if (findDuplicate(session.advisoryAcknowledgements.map((entry) => entry.field)) !== undefined) {
       addIssue("An advisory field can be acknowledged once.", ["advisoryAcknowledgements"]);
     }
@@ -288,6 +298,7 @@ export function createEmptySession(context: WriteContext): SopSession {
     procedureOrder: [],
     claimHistory: [],
     approvedAt: null,
+    downloadedAt: null,
     advisoryAcknowledgements: [],
   };
 }

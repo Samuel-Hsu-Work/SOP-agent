@@ -1,3 +1,4 @@
+import type { SopExportRefusalReason } from "@sop-agent/sop-core";
 import OpenAI from "openai";
 import { ModelOutputError, ModelRefusalError } from "./model/modelFallback.ts";
 
@@ -60,6 +61,25 @@ export interface ChatTurnLog {
   claimCount: number;
   /** How many claims a person has confirmed. The only server-visible trace that review is happening. */
   confirmedClaimCount: number;
+}
+
+/**
+ * The single log line written per PDF request that reaches the gate. Counts, timings and
+ * categories only: never a title, claim text, note, file name, or the error's own message.
+ */
+export interface SopPdfLog {
+  event: "sop_pdf";
+  outcome: "rendered" | "refused" | "failed";
+  /** Why an export was refused: a fixed category, or null when it was not refused. */
+  refusalReason: SopExportRefusalReason | null;
+  /** Null unless the browser sent a UUID: any other value could carry user text. */
+  sessionId: string | null;
+  claimCount: number;
+  pageCount: number | null;
+  byteLength: number | null;
+  /** How many characters the font could not draw. A count only, never the characters. */
+  replacedCharacters: number | null;
+  durationMs: number;
 }
 
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;

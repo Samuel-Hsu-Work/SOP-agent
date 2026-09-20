@@ -1,11 +1,9 @@
 import {
   buildInterviewAgenda,
-  type ChatHttpError,
   type ChatStreamEvent,
   chatRequestSchema,
   computeGaps,
   encodeChatStreamEvent,
-  type HttpErrorCode,
   MAX_MESSAGES,
   type SopSession,
   type UserMessage,
@@ -27,6 +25,7 @@ import {
   ModelRefusalError,
   runWithModelFallback,
 } from "../model/modelFallback.ts";
+import { httpError } from "./httpError.ts";
 
 export interface ChatRouteDependencies {
   modelClient: ModelClient;
@@ -37,14 +36,6 @@ export interface ChatRouteDependencies {
 
 function countConfirmedClaims(session: SopSession): number {
   return session.claims.filter((claim) => claim.status === "confirmed").length;
-}
-
-function httpError(
-  code: HttpErrorCode,
-  message: string,
-  issues?: { path: string; code: string }[],
-): ChatHttpError {
-  return { error: { code, message, ...(issues === undefined ? {} : { issues }) } };
 }
 
 function isModelUnavailable(error: unknown): boolean {
