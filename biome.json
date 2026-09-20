@@ -8,6 +8,7 @@
       "!**/.next",
       "!**/out",
       "!.pnpm-store",
+      "!apps/api/evals/runs",
       "!.claude",
       "!docs",
       "!fixtures",

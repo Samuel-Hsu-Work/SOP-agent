@@ -7,7 +7,9 @@
     "start": "tsx --env-file-if-exists=../../.env src/start.ts",
     "test": "vitest run --passWithNoTests",
     "typecheck": "tsc --noEmit",
-    "smoke": "tsx --env-file-if-exists=../../.env src/smoke/liveSmokeTest.ts"
+    "smoke": "tsx --env-file-if-exists=../../.env src/smoke/liveSmokeTest.ts",
+    "eval": "vitest run --config vitest.eval.config.ts",
+    "eval:recheck": "tsx src/evals/recheckRun.ts"
   },
   "dependencies": {
     "@fastify/cors": "^11.3.0",

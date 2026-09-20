@@ -16,7 +16,9 @@
     "dev:api": "pnpm --filter @sop-agent/api dev",
     "dev:web": "pnpm --filter @sop-agent/web dev",
     "dev": "pnpm -r --parallel --filter @sop-agent/api --filter @sop-agent/web dev",
-    "smoke:api": "pnpm --filter @sop-agent/api smoke"
+    "smoke:api": "pnpm --filter @sop-agent/api smoke",
+    "eval": "pnpm --filter @sop-agent/api eval",
+    "eval:recheck": "pnpm --filter @sop-agent/api eval:recheck"
   },
   "devDependencies": {
     "@biomejs/biome": "^2.5.14",
