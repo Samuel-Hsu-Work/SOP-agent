@@ -26,8 +26,15 @@ export interface ModelToolCall {
 
 export interface ModelStepRequest {
   model: string;
+  /** Fixed for the whole session. Nothing that changes between steps may go here. */
   instructions: string;
+  /** The conversation window and this turn's tool traffic. Only ever appended to within a turn. */
   conversation: readonly ModelConversationItem[];
+  /**
+   * The current SOP state, sent as the very last input item, after the conversation. Everything
+   * before it is the same from one step to the next, so the provider can reuse that prefix.
+   */
+  stateItem: string;
   tools: readonly ModelToolSpec[];
   /** False for a closing call that must answer in text only. */
   allowToolCalls: boolean;
@@ -41,6 +48,8 @@ export interface ModelStepResult {
   /** Everything the model returned, to be echoed back if the turn continues. */
   providerItems: unknown[];
   inputTokens: number;
+  /** The part of `inputTokens` the provider served from its prompt cache. */
+  cachedInputTokens: number;
   outputTokens: number;
 }
 

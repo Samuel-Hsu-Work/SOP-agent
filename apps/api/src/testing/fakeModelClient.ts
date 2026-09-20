@@ -36,6 +36,7 @@ function result(toolCalls: ModelToolCall[]): ModelStepResult {
     toolCalls,
     providerItems: toolCalls.map((call) => ({ type: "function_call", ...call })),
     inputTokens: 10,
+    cachedInputTokens: 4,
     outputTokens: 5,
   };
 }
@@ -66,28 +67,56 @@ export function failingStep(error: Error, ...deltasBeforeFailure: string[]): Scr
 
 let callCounter = 0;
 
+function toolCall(name: string, args: Record<string, unknown>): ModelToolCall {
+  callCounter += 1;
+  return { callId: `call_${callCounter}`, name, argumentsJson: JSON.stringify(args) };
+}
+
 export function recordClaimCall(
   overrides: Partial<{
     field: string;
     status: string;
-    statement: string | null;
+    statement: string;
     effectiveDate: string | null;
     note: string | null;
-    replacesClaimId: string | null;
+    insertBeforeClaimId: string | null;
   }> = {},
 ): ModelToolCall {
-  callCounter += 1;
-  return {
-    callId: `call_${callCounter}`,
-    name: "record_claim",
-    argumentsJson: JSON.stringify({
-      field: "purpose",
-      status: "observed",
-      statement: "Handle customer refunds.",
-      effectiveDate: null,
-      note: null,
-      replacesClaimId: null,
-      ...overrides,
-    }),
-  };
+  return toolCall("record_claim", {
+    field: "purpose",
+    status: "observed",
+    statement: "Handle customer refunds.",
+    effectiveDate: null,
+    note: null,
+    insertBeforeClaimId: null,
+    ...overrides,
+  });
+}
+
+export function correctClaimCall(
+  claimId: string,
+  overrides: Partial<{ statement: string; effectiveDate: string | null; note: string | null }> = {},
+): ModelToolCall {
+  return toolCall("correct_claim", {
+    claimId,
+    statement: "Handle refunds and exchanges.",
+    effectiveDate: null,
+    note: null,
+    ...overrides,
+  });
+}
+
+export function markClaimUnknownCall(
+  field: string,
+  claimId: string | null,
+  note = "The user does not know.",
+): ModelToolCall {
+  return toolCall("mark_claim_unknown", { field, claimId, note });
+}
+
+export function withdrawClaimCall(
+  claimId: string,
+  note = "The user said it does not apply.",
+): ModelToolCall {
+  return toolCall("withdraw_claim", { claimId, note });
 }

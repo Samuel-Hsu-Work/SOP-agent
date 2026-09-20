@@ -51,6 +51,16 @@ describe("session store", () => {
     expect(loadSession(storage)).toEqual({ status: "invalid" });
   });
 
+  it("discards a session stored by version 1 of the app instead of migrating it", () => {
+    const storage = createFakeStorage();
+    const { procedureOrder: _procedureOrder, ...withoutProcedureOrder } = session;
+    storage.setItem(
+      SESSION_STORAGE_KEY,
+      JSON.stringify({ ...withoutProcedureOrder, schemaVersion: 1 }),
+    );
+    expect(loadSession(storage)).toEqual({ status: "invalid" });
+  });
+
   it("returns false instead of throwing when the storage quota is full", () => {
     expect(saveSession(session, createFakeStorage({ failOnWrite: true }))).toBe(false);
   });

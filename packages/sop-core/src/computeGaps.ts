@@ -24,6 +24,12 @@ export interface FieldReadiness {
   claimCount: number;
   unresolvedClaimIds: string[];
   gap: FieldGap | null;
+  /**
+   * Whether the agent may still ask about this field. A gap the user already answered "I don't
+   * know" to, or one that only awaits a document review, is not askable, so the agent does not
+   * pester. An empty field or one with a conflict is.
+   */
+  askable: boolean;
 }
 
 export interface GapReport {
@@ -46,14 +52,18 @@ function isUnresolved(status: ClaimStatus): boolean {
 export function computeGaps(session: SopSession): GapReport {
   const fields = SOP_FIELDS.map((definition): FieldReadiness => {
     const claims = session.claims.filter((claim) => claim.field === definition.name);
-    const unresolvedClaimIds = claims
-      .filter((claim) => isUnresolved(claim.status))
-      .map((claim) => claim.claimId);
+    const unresolvedClaims = claims.filter((claim) => isUnresolved(claim.status));
+    const unresolvedClaimIds = unresolvedClaims.map((claim) => claim.claimId);
 
     const state: FieldState =
       claims.length === 0 ? "empty" : unresolvedClaimIds.length > 0 ? "unresolved" : "resolved";
     const gap: FieldGap | null =
       state === "resolved" ? null : { severity: definition.fieldClass, reason: state };
+
+    const isOnlyUnknownOrExtracted = unresolvedClaims.every(
+      (claim) => claim.status === "unknown" || claim.status === "extracted",
+    );
+    const askable = gap !== null && (state === "empty" || !isOnlyUnknownOrExtracted);
 
     return {
       field: definition.name,
@@ -63,6 +73,7 @@ export function computeGaps(session: SopSession): GapReport {
       claimCount: claims.length,
       unresolvedClaimIds,
       gap,
+      askable,
     };
   });
 

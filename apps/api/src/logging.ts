@@ -37,11 +37,24 @@ export interface ChatTurnLog {
   toolCallsRejected: number;
   toolCallsDropped: number;
   rejectionCodes: string[];
+  claimsRecorded: number;
+  claimsCorrected: number;
+  claimsMarkedUnknown: number;
+  claimsWithdrawn: number;
+  claimsUnchanged: number;
+  historyEntriesWritten: number;
+  withdrawLimitHits: number;
+  stateItemChars: number;
+  /** The first field the interview agenda proposed at the start of the turn: one of 13 names. */
+  agendaTopField: string | null;
+  /** Null when the turn did not commit. */
+  readyToReview: boolean | null;
   blockingGapsBefore: number;
   blockingGapsAfter: number | null;
   advisoryGapsBefore: number;
   advisoryGapsAfter: number | null;
   inputTokens: number;
+  cachedInputTokens: number;
   outputTokens: number;
   messageCount: number;
   claimCount: number;

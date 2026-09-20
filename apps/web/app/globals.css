@@ -15,6 +15,8 @@
   --advisory-soft: #f6ecd2;
   --complete: #1a6237;
   --complete-soft: #dcefe2;
+  --suggested: #3b4a8a;
+  --suggested-soft: #e4e8f7;
   --mono: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
 }
 
@@ -34,6 +36,8 @@
     --advisory-soft: #372a0c;
     --complete: #7fd49b;
     --complete-soft: #12301d;
+    --suggested: #a9b8f0;
+    --suggested-soft: #1d2444;
   }
 }
 
@@ -247,8 +251,124 @@ textarea:focus-visible {
   border-bottom: 1px solid var(--rule);
 }
 
-.field-row:last-child {
+.field-item {
+  border-bottom: 1px solid var(--rule);
+}
+
+.field-item:last-child {
   border-bottom: none;
+}
+
+.field-item .field-row {
+  border-bottom: none;
+}
+
+summary.field-row {
+  cursor: pointer;
+  list-style: none;
+}
+
+summary.field-row::-webkit-details-marker {
+  display: none;
+}
+
+/* The default marker is hidden above, so a chevron shows which rows can be opened. */
+summary.field-row::after {
+  content: "";
+  flex-shrink: 0;
+  width: 8px;
+  height: 8px;
+  margin-left: 4px;
+  border-right: 2px solid var(--muted);
+  border-bottom: 2px solid var(--muted);
+  transform: rotate(-45deg);
+  transition: transform 0.15s;
+}
+
+details[open] > summary.field-row::after {
+  transform: rotate(45deg);
+}
+
+summary.field-row:hover {
+  background: color-mix(in srgb, var(--ink) 5%, transparent);
+}
+
+summary.field-row:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
+}
+
+.field-claims {
+  padding: 0 16px 12px;
+}
+
+.claim-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 10px;
+}
+
+.claim-body {
+  display: flex;
+  gap: 6px;
+}
+
+.claim-step {
+  flex-shrink: 0;
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+}
+
+.claim-text-unknown {
+  color: var(--muted);
+  font-style: italic;
+}
+
+.claim-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 12px;
+  margin-top: 2px;
+  color: var(--muted);
+  font-size: 0.8rem;
+}
+
+.claim-status {
+  font-weight: 600;
+}
+
+.claim-status-unknown,
+.claim-status-conflict {
+  color: var(--blocking);
+}
+
+.claim-status-proposed {
+  color: var(--advisory);
+}
+
+.claim-history {
+  margin-top: 6px;
+  color: var(--muted);
+  font-size: 0.8rem;
+}
+
+.claim-history summary {
+  cursor: pointer;
+}
+
+.claim-history ul {
+  margin: 4px 0 0;
+  padding-left: 18px;
+}
+
+.history-reason {
+  font-weight: 600;
+}
+
+.removed-claims {
+  margin-top: 10px;
 }
 
 .field-label {
@@ -278,6 +398,12 @@ textarea:focus-visible {
 .status-blocking {
   color: var(--blocking);
   background: var(--blocking-soft);
+}
+
+.status-suggested {
+  color: var(--suggested);
+  background: var(--suggested-soft);
+  border: 1px dashed currentColor;
 }
 
 .status-advisory {

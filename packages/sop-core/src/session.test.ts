@@ -1,72 +1,94 @@
 import { describe, expect, it } from "vitest";
-import { applyClaim } from "./applyClaim.ts";
+import { applyClaim, type ClaimWriteCommand, type RecordClaimCommand } from "./applyClaim.ts";
 import { computeGaps } from "./computeGaps.ts";
 import { MAX_MESSAGES, MAX_STATEMENT_LENGTH } from "./limits.ts";
 import { createEmptySession, type SopSession, sopSessionSchema } from "./session.ts";
+import type { SopFieldName } from "./sopFields.ts";
 import { buildClaim, createDeterministicContext, createSessionWithUserMessage } from "./testing.ts";
 
-/** A session that exercises every nullable field in both of its states. */
+/** A session that exercises every nullable field, every history reason and both value kinds. */
 function buildRichSession(): SopSession {
   const context = createDeterministicContext();
   const { session, messageId } = createSessionWithUserMessage(context, "We refund within 30 days.");
-  const base = {
+  const shared = { createdByType: "agent", sourceMessageId: messageId } as const;
+  const record = (
+    field: SopFieldName,
+    statement: string,
+    overrides: Partial<RecordClaimCommand> = {},
+  ): RecordClaimCommand => ({
     kind: "record",
-    createdByType: "agent",
-    sourceMessageId: messageId,
-    replacesClaimId: null,
-  } as const;
+    ...shared,
+    field,
+    status: "observed",
+    statement,
+    note: null,
+    effectiveDate: null,
+    insertBeforeClaimId: null,
+    ...overrides,
+  });
+  const applyOk = (current: SopSession, command: ClaimWriteCommand) => {
+    const result = applyClaim(current, command, context);
+    if (!result.ok) throw new Error(`setup failed: ${result.error.code}`);
+    return result;
+  };
 
-  const steps = [
-    {
-      field: "purpose",
-      status: "observed",
-      statement: "Handle refunds.",
-      note: null,
-      effectiveDate: null,
-    },
-    {
-      field: "scope",
+  let current = applyOk(session, record("purpose", "Handle refunds.")).session;
+  current = applyOk(
+    current,
+    record("scope", "Online orders only.", {
       status: "proposed",
-      statement: "Online orders only.",
       note: "Suggested.",
       effectiveDate: "2025-03-01",
-    },
-    {
-      field: "authorization",
-      status: "unknown",
-      statement: null,
-      note: "Approver unclear.",
-      effectiveDate: null,
-    },
-  ] as const;
+    }),
+  ).session;
+  const first = applyOk(current, record("procedure", "Receive the request."));
+  const second = applyOk(first.session, record("procedure", "Check the policy."));
+  const third = applyOk(second.session, record("procedure", "Issue the refund."));
+  current = third.session;
 
-  let current = session;
-  let unknownId = "";
-  for (const step of steps) {
-    const result = applyClaim(current, { ...base, ...step }, context);
-    if (!result.ok) throw new Error("setup failed");
-    current = result.session;
-    if (step.status === "unknown") unknownId = result.claim.claimId;
-  }
-  const replaced = applyClaim(
-    current,
-    {
-      ...base,
-      field: "authorization",
-      status: "observed",
-      statement: "A lead approves.",
-      note: null,
-      effectiveDate: null,
-      replacesClaimId: unknownId,
-    },
-    context,
-  );
-  if (!replaced.ok) throw new Error("setup failed");
+  const purpose = applyOk(current, {
+    kind: "correct",
+    ...shared,
+    claimId: current.claims[0]?.claimId ?? "",
+    statement: "Handle refunds and exchanges.",
+    note: null,
+    effectiveDate: null,
+  });
+  current = purpose.session;
+
+  const unknown = applyOk(current, {
+    kind: "markUnknown",
+    ...shared,
+    field: "authorization",
+    claimId: null,
+    note: "Approver unclear.",
+  });
+  current = applyOk(unknown.session, {
+    kind: "correct",
+    ...shared,
+    claimId: unknown.claim.claimId,
+    statement: "A lead approves.",
+    note: null,
+    effectiveDate: null,
+  }).session;
+  current = applyOk(current, {
+    kind: "markUnknown",
+    ...shared,
+    field: "procedure",
+    claimId: second.claim.claimId,
+    note: "Not sure who checks.",
+  }).session;
+  current = applyOk(current, {
+    kind: "withdraw",
+    ...shared,
+    claimId: first.claim.claimId,
+    note: "Not part of this process.",
+  }).session;
 
   return {
-    ...replaced.session,
+    ...current,
     messages: [
-      ...replaced.session.messages,
+      ...current.messages,
       {
         id: "assistant-1",
         role: "assistant",
@@ -79,7 +101,7 @@ function buildRichSession(): SopSession {
             toolName: "record_claim",
             field: "purpose",
             requestedStatus: "observed",
-            outcome: { ok: true, claimId: "id-3" },
+            outcome: { ok: true, claimId: "id-3", change: "created" },
           },
           {
             callId: "call_2",
@@ -105,7 +127,9 @@ describe("sopSessionSchema", () => {
 
   it("survives a JSON round trip without loss", () => {
     const session = buildRichSession();
-    expect(session.claimHistory).toHaveLength(1);
+    expect(new Set(session.claimHistory.map((entry) => entry.reason))).toEqual(
+      new Set(["corrected", "answered_unknown", "marked_unknown", "withdrawn"]),
+    );
     const roundTripped = sopSessionSchema.parse(JSON.parse(JSON.stringify(session)));
     expect(roundTripped).toEqual(session);
   });
@@ -122,9 +146,9 @@ describe("sopSessionSchema", () => {
     expect((parsed.claims as Record<string, unknown>[])[0]?.injected).toBeUndefined();
   });
 
-  it("rejects a wrong schema version and malformed timestamps", () => {
+  it("rejects a stored version-1 session, and other wrong versions and malformed timestamps", () => {
     const session = createEmptySession(createDeterministicContext());
-    expect(sopSessionSchema.safeParse({ ...session, schemaVersion: 2 }).success).toBe(false);
+    expect(sopSessionSchema.safeParse({ ...session, schemaVersion: 1 }).success).toBe(false);
     expect(sopSessionSchema.safeParse({ ...session, createdAt: "yesterday" }).success).toBe(false);
   });
 
@@ -178,6 +202,55 @@ describe("sopSessionSchema", () => {
     expect(withClaim({ ...observed, value: null }).success).toBe(false);
     expect(withClaim({ ...observed, authority: "proposed" }).success).toBe(false);
     expect(withClaim(observed).success).toBe(true);
+  });
+
+  it("rejects a broken procedure order", () => {
+    const session = buildRichSession();
+    const [firstId, secondId] = session.procedureOrder;
+    if (firstId === undefined || secondId === undefined) throw new Error("setup failed");
+    const purposeId = session.claims.find((claim) => claim.field === "purpose")?.claimId ?? "";
+    const withOrder = (procedureOrder: string[]) =>
+      sopSessionSchema.safeParse({ ...session, procedureOrder }).success;
+
+    expect(withOrder([firstId, secondId])).toBe(true);
+    expect(withOrder([secondId, firstId])).toBe(true);
+    expect(withOrder([firstId, firstId])).toBe(false); // repeats a step
+    expect(withOrder([firstId])).toBe(false); // leaves an active step unlisted
+    expect(withOrder([firstId, secondId, purposeId])).toBe(false); // lists a non-procedure claim
+    expect(withOrder([firstId, secondId, "missing"])).toBe(false); // lists no claim at all
+  });
+
+  it("rejects a step outside the procedure field and a statement inside it", () => {
+    const session = buildRichSession();
+    const purpose = session.claims.find((claim) => claim.field === "purpose");
+    if (purpose === undefined) throw new Error("setup failed");
+    const asStep = { ...purpose, value: { kind: "step", text: "A step." } };
+    expect(
+      sopSessionSchema.safeParse({
+        ...session,
+        claims: session.claims.map((claim) => (claim === purpose ? asStep : claim)),
+      }).success,
+    ).toBe(false);
+
+    const step = session.claims.find((claim) => claim.value?.kind === "step");
+    if (step === undefined) throw new Error("setup failed");
+    const asStatement = { ...step, value: { kind: "statement", text: "Not a step." } };
+    expect(
+      sopSessionSchema.safeParse({
+        ...session,
+        claims: session.claims.map((claim) => (claim === step ? asStatement : claim)),
+      }).success,
+    ).toBe(false);
+  });
+
+  it("rejects a history entry that cites a missing message", () => {
+    const session = buildRichSession();
+    const entry = session.claimHistory[0];
+    if (entry === undefined) throw new Error("setup failed");
+    const dangling = { ...entry, sourceMessageId: "missing" };
+    expect(sopSessionSchema.safeParse({ ...session, claimHistory: [dangling] }).success).toBe(
+      false,
+    );
   });
 
   it("rejects oversized arrays and oversized text", () => {

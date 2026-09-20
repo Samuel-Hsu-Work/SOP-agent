@@ -118,4 +118,28 @@ describe("computeGaps", () => {
     computeGaps(session);
     expect(JSON.stringify(session)).toBe(before);
   });
+
+  describe("askable", () => {
+    it("is true for an empty field and for a conflict, false for an unknown or an extracted claim", () => {
+      const session = sessionWithClaims(
+        buildClaim({ claimId: "c1", field: "authorization", status: "unknown" }),
+        buildClaim({ claimId: "c2", field: "roles", status: "conflict" }),
+        buildClaim({ claimId: "c3", field: "trigger", status: "extracted" }),
+        buildClaim({ claimId: "c4", field: "governance", status: "unknown" }),
+        buildClaim({ claimId: "c5", field: "governance", status: "conflict" }),
+      );
+      expect(readinessOf(session, "purpose").askable).toBe(true);
+      expect(readinessOf(session, "authorization").askable).toBe(false);
+      expect(readinessOf(session, "roles").askable).toBe(true);
+      expect(readinessOf(session, "trigger").askable).toBe(false);
+      expect(readinessOf(session, "governance").askable).toBe(true);
+    });
+
+    it("is false for a resolved field", () => {
+      const session = sessionWithClaims(
+        buildClaim({ claimId: "c1", field: "purpose", status: "observed" }),
+      );
+      expect(readinessOf(session, "purpose").askable).toBe(false);
+    });
+  });
 });

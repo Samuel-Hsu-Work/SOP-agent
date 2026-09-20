@@ -39,7 +39,10 @@ export function buildResponsesRequest(request: ModelStepRequest) {
   return {
     model: request.model,
     instructions: request.instructions,
-    input: request.conversation.map(toInputItem),
+    input: [
+      ...request.conversation.map(toInputItem),
+      { role: "user" as const, content: request.stateItem },
+    ],
     tools: request.tools.map((tool) =>
       zodResponsesFunction({
         name: tool.name,
@@ -114,6 +117,7 @@ export function createOpenAiModelClient(client: OpenAI): ModelClient {
         toolCalls,
         providerItems: response.output.map(stripClientOnlyFields),
         inputTokens: response.usage?.input_tokens ?? 0,
+        cachedInputTokens: response.usage?.input_tokens_details?.cached_tokens ?? 0,
         outputTokens: response.usage?.output_tokens ?? 0,
       };
     },

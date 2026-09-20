@@ -39,8 +39,9 @@ export function createSessionWithUserMessage(
 export function buildClaim(overrides: Partial<Claim> & Pick<Claim, "claimId" | "field">): Claim {
   const status = overrides.status ?? "observed";
   const isUnknown = status === "unknown";
+  const valueKind = overrides.field === "procedure" ? "step" : "statement";
   return {
-    value: isUnknown ? null : { kind: "statement", text: "A statement." },
+    value: isUnknown ? null : { kind: valueKind, text: "A statement." },
     status,
     source: { type: "employee_statement", reference: { kind: "message", messageId: "message-1" } },
     authority: isUnknown ? "unknown" : "observed_practice",
@@ -48,6 +49,7 @@ export function buildClaim(overrides: Partial<Claim> & Pick<Claim, "claimId" | "
     note: null,
     createdByType: "agent",
     createdAt: "2026-01-01T00:00:00.000Z",
+    updatedAt: "2026-01-01T00:00:00.000Z",
     ...overrides,
   };
 }

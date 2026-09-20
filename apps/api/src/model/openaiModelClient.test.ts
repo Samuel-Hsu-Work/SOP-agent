@@ -48,6 +48,7 @@ function stepRequest(overrides: Partial<ModelStepRequest> = {}): ModelStepReques
     model: "test-model",
     instructions: "Be helpful.",
     conversation: [{ kind: "message", role: "user", text: "Hello" }],
+    stateItem: "STATE",
     tools: AGENT_TOOLS,
     allowToolCalls: true,
     onTextDelta: () => {},
@@ -62,20 +63,45 @@ describe("buildResponsesRequest", () => {
     expect(buildResponsesRequest(stepRequest({ allowToolCalls: false })).store).toBe(false);
   });
 
-  it("offers exactly one tool, record_claim, as a strict function", () => {
+  it("offers the four claim tools, each as a strict function", () => {
     const { tools } = buildResponsesRequest(stepRequest());
-    expect(tools).toHaveLength(1);
-    expect(tools[0]).toMatchObject({ type: "function", name: "record_claim", strict: true });
+    expect(tools.map((tool) => ("name" in tool ? tool.name : null))).toEqual([
+      "record_claim",
+      "correct_claim",
+      "mark_claim_unknown",
+      "withdraw_claim",
+    ]);
+    for (const tool of tools) expect(tool).toMatchObject({ type: "function", strict: true });
   });
 
   it("offers no status the agent may not write", () => {
-    const [tool] = buildResponsesRequest(stepRequest()).tools;
-    const serialized = JSON.stringify(tool);
-    for (const allowed of ["observed", "proposed", "unknown"])
-      expect(serialized).toContain(allowed);
+    const { tools } = buildResponsesRequest(stepRequest());
+    const serialized = JSON.stringify(tools);
+    for (const allowed of ["observed", "proposed"]) expect(serialized).toContain(allowed);
     for (const forbidden of ["confirmed", "extracted", "conflict"]) {
       expect(serialized).not.toContain(forbidden);
     }
+  });
+
+  it("sends the state item last, after the conversation and the tool traffic", () => {
+    const { input } = buildResponsesRequest(
+      stepRequest({
+        conversation: [
+          { kind: "message", role: "user", text: "Hi" },
+          { kind: "tool_result", callId: "call_1", output: '{"ok":true}' },
+        ],
+        stateItem: "THE STATE",
+      }),
+    );
+    expect(input.at(-1)).toEqual({ role: "user", content: "THE STATE" });
+    expect(input).toHaveLength(3);
+  });
+
+  it("keeps the instructions free of the state, so the start of the prompt can be cached", () => {
+    const first = buildResponsesRequest(stepRequest({ stateItem: "STATE ONE" }));
+    const second = buildResponsesRequest(stepRequest({ stateItem: "STATE TWO" }));
+    expect(first.instructions).toBe(second.instructions);
+    expect(first.instructions).not.toContain("STATE");
   });
 
   it("switches tool choice off for the closing call", () => {
@@ -105,6 +131,7 @@ describe("buildResponsesRequest", () => {
       { role: "assistant", content: "Hello" },
       providerItem,
       { type: "function_call_output", call_id: "call_1", output: '{"ok":true}' },
+      { role: "user", content: "STATE" },
     ]);
   });
 });
@@ -149,7 +176,11 @@ describe("createOpenAiModelClient", () => {
       {
         status: "completed",
         output: [functionCall],
-        usage: { input_tokens: 12, output_tokens: 7 },
+        usage: {
+          input_tokens: 12,
+          input_tokens_details: { cached_tokens: 8 },
+          output_tokens: 7,
+        },
       },
       ["Hel", "lo"],
     );
@@ -159,7 +190,7 @@ describe("createOpenAiModelClient", () => {
       { callId: "call_1", name: "record_claim", argumentsJson: '{"field":"purpose"}' },
     ]);
     expect(JSON.stringify(result.providerItems)).not.toContain("parsed_arguments");
-    expect(result).toMatchObject({ inputTokens: 12, outputTokens: 7 });
+    expect(result).toMatchObject({ inputTokens: 12, cachedInputTokens: 8, outputTokens: 7 });
   });
 
   it.each(["in_progress", "queued", "failed", "cancelled", "incomplete"])(

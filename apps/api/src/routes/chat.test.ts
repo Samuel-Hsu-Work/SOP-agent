@@ -4,8 +4,11 @@ import {
   type ChatStreamEvent,
   chatStreamEventSchema,
   createEmptySession,
+  MAX_CLAIMS,
+  MAX_IDENTIFIER_LENGTH,
   MAX_MESSAGES,
   type SopSession,
+  sopSessionSchema,
   systemWriteContext,
 } from "@sop-agent/sop-core";
 import type { FastifyInstance } from "fastify";
@@ -18,6 +21,7 @@ import { buildServer, REQUEST_BODY_LIMIT_BYTES } from "../server.ts";
 import {
   createScriptedModelClient,
   failingStep,
+  markClaimUnknownCall,
   recordClaimCall,
   type ScriptedStep,
   textStep,
@@ -122,15 +126,21 @@ describe("POST /chat: a normal turn", () => {
     expect(assistant?.role === "assistant" && assistant.model).toBe("primary-model");
   });
 
-  it("gives the model exactly one tool, the session state, and the user's message", async () => {
+  it("gives the model the four claim tools, fixed instructions, the user's message and the state last", async () => {
     const client = createScriptedModelClient([textStep("Hello.")]);
     const { app } = await createApp(client);
     await postChat(app, { session: emptySession(), message: "We handle refunds." });
 
     const request = client.requests[0];
-    expect(request?.tools.map((tool) => tool.name)).toEqual(["record_claim"]);
+    expect(request?.tools.map((tool) => tool.name)).toEqual([
+      "record_claim",
+      "correct_claim",
+      "mark_claim_unknown",
+      "withdraw_claim",
+    ]);
     expect(request?.allowToolCalls).toBe(true);
-    expect(request?.instructions).toContain("<sop_state>");
+    expect(request?.instructions).not.toContain("<sop_state>");
+    expect(request?.stateItem).toContain("<sop_state>");
     expect(request?.conversation).toEqual([
       { kind: "message", role: "user", text: "We handle refunds." },
     ]);
@@ -235,6 +245,43 @@ describe("POST /chat: bad requests are refused before any model call", () => {
     expect(client.requests).toHaveLength(0);
   });
 
+  it("rejects a session whose state would be too large for the model with 413, before any call", async () => {
+    const client = createScriptedModelClient([]);
+    const { app } = await createApp(client);
+    const session = emptySession();
+    const claims = Array.from({ length: MAX_CLAIMS }, (_, index) => ({
+      claimId: `claim-${index}`.padEnd(MAX_IDENTIFIER_LENGTH, "-"),
+      field: "purpose" as const,
+      value: { kind: "statement" as const, text: `${index}-`.padEnd(70, "x") },
+      status: "observed" as const,
+      source: {
+        type: "employee_statement" as const,
+        reference: { kind: "message" as const, messageId: "m-1" },
+      },
+      authority: "observed_practice" as const,
+      effectiveDate: null,
+      note: null,
+      createdByType: "agent" as const,
+      createdAt: "2026-01-01T00:00:00.000Z",
+      updatedAt: "2026-01-01T00:00:00.000Z",
+    }));
+    const oversized = {
+      ...session,
+      messages: [
+        { id: "m-1", role: "user" as const, createdAt: "2026-01-01T00:00:00.000Z", text: "Hi" },
+      ],
+      claims,
+    };
+    // The schema's own caps must let this through, or the test would prove nothing about the state cap.
+    expect(sopSessionSchema.safeParse(oversized).success).toBe(true);
+
+    const response = await postChat(app, { session: oversized, message: "Hello" });
+    expect(response.statusCode).toBe(413);
+    expect(response.json().error.message).toContain("too large to continue");
+    expect(response.json().error.code).toBe("payload_too_large");
+    expect(client.requests).toHaveLength(0);
+  });
+
   it("rejects a body that is not JSON with 415", async () => {
     const client = createScriptedModelClient([]);
     const { app } = await createApp(client);
@@ -252,7 +299,9 @@ describe("POST /chat: bad requests are refused before any model call", () => {
 describe("POST /chat: the tool loop is bounded", () => {
   it("stops after the round cap and asks for a closing reply without tools", async () => {
     const steps: ScriptedStep[] = [
-      ...Array.from({ length: MAX_TOOL_ROUNDS }, () => toolCallStep([recordClaimCall()])),
+      ...Array.from({ length: MAX_TOOL_ROUNDS }, (_, index) =>
+        toolCallStep([recordClaimCall({ statement: `Fact number ${index}.` })]),
+      ),
       textStep("Closing message."),
     ];
     const client = createScriptedModelClient(steps);
@@ -365,11 +414,41 @@ describe("POST /chat: logs carry counts, never content", () => {
     expect(chatTurnLog(logLines)).toMatchObject({
       outcome: "committed",
       toolCallsApplied: 1,
+      claimsRecorded: 1,
+      claimsCorrected: 0,
+      claimsMarkedUnknown: 0,
+      claimsWithdrawn: 0,
+      claimsUnchanged: 0,
+      historyEntriesWritten: 0,
+      withdrawLimitHits: 0,
+      agendaTopField: "purpose",
+      readyToReview: false,
+      cachedInputTokens: 8,
       blockingGapsBefore: 8,
       blockingGapsAfter: 7,
       messageCount: 2,
       claimCount: 1,
     });
+    expect(chatTurnLog(logLines).stateItemChars).toBeGreaterThan(0);
+  });
+
+  it("never writes claim ids, notes or questions from the model's tool traffic to the log", async () => {
+    const client = createScriptedModelClient([
+      toolCallStep([
+        recordClaimCall({ statement: "SENTINEL-STATEMENT-11aa", note: "SENTINEL-NOTE-22bb" }),
+        markClaimUnknownCall("scope", null, "SENTINEL-UNKNOWN-33cc"),
+      ]),
+      textStep("SENTINEL-QUESTION-44dd?"),
+    ]);
+    const { app, logLines } = await createApp(client);
+    const response = await postChat(app, { session: emptySession(), message: "Hi" });
+    const session = commitOf(parseEvents(response.body));
+
+    const everything = logLines.join("");
+    for (const sentinel of ["STATEMENT-11aa", "NOTE-22bb", "UNKNOWN-33cc", "QUESTION-44dd"]) {
+      expect(everything).not.toContain(sentinel);
+    }
+    for (const claim of session.claims) expect(everything).not.toContain(claim.claimId);
   });
 });
 

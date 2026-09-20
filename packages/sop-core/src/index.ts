@@ -2,7 +2,10 @@ export type {
   ApplyClaimResult,
   ClaimWriteCommand,
   ClaimWriteError,
+  CorrectClaimCommand,
+  MarkUnknownCommand,
   RecordClaimCommand,
+  WithdrawClaimCommand,
 } from "./applyClaim.ts";
 export { applyClaim, STATUSES_WRITABLE_BY } from "./applyClaim.ts";
 export type {
@@ -39,6 +42,7 @@ export {
   claimSchema,
   claimValueSchema,
   SOURCE_TYPES,
+  totalClaimTextLength,
   UNRESOLVED_STATUSES,
 } from "./claim.ts";
 export type {
@@ -48,11 +52,27 @@ export type {
   GapReport,
 } from "./computeGaps.ts";
 export { computeGaps } from "./computeGaps.ts";
+export type {
+  AgendaExclusion,
+  AgendaQuestion,
+  InterviewAgenda,
+  ProcedureStepView,
+} from "./interviewAgenda.ts";
+export {
+  buildInterviewAgenda,
+  MAX_AGENDA_QUESTIONS,
+  mentionsQuantity,
+  orderProcedureSteps,
+  recentQuestions,
+} from "./interviewAgenda.ts";
 export * from "./limits.ts";
 export type {
+  AgentToolName,
   AssistantMessage,
   ChatMessage,
+  ClaimChange,
   ClaimHistoryEntry,
+  HistoryReason,
   RecordedToolCall,
   SessionStatus,
   SopSession,
@@ -60,12 +80,18 @@ export type {
   UserMessage,
 } from "./session.ts";
 export {
+  AGENT_TOOL_NAMES,
+  CLAIM_CHANGES,
+  CORRECT_CLAIM_TOOL_NAME,
   createEmptySession,
+  HISTORY_REASONS,
+  MARK_CLAIM_UNKNOWN_TOOL_NAME,
   RECORD_CLAIM_TOOL_NAME,
   SESSION_SCHEMA_VERSION,
   SESSION_STATUSES,
   sopSessionSchema,
   TOOL_OUTCOME_ERROR_CODES,
+  WITHDRAW_CLAIM_TOOL_NAME,
 } from "./session.ts";
 export type { FieldClass, SopField, SopFieldName } from "./sopFields.ts";
 export {

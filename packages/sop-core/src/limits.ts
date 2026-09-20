@@ -11,3 +11,10 @@ export const MAX_MESSAGES = 200;
 export const MAX_CLAIMS = 500;
 export const MAX_HISTORY_ENTRIES = 500;
 export const MAX_TOOL_CALLS_PER_MESSAGE = 16;
+
+/**
+ * The most text all active claims and notes may hold together. The per-item limits alone allow a
+ * session far larger than any prompt should be, so this bounds it. A session over the cap is
+ * refused, never truncated, because every claim has to stay addressable for corrections.
+ */
+export const MAX_TOTAL_CLAIM_TEXT = 40_000;

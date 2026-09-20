@@ -1,4 +1,5 @@
 import {
+  buildInterviewAgenda,
   type ChatHttpError,
   type ChatStreamEvent,
   chatRequestSchema,
@@ -12,7 +13,8 @@ import {
 } from "@sop-agent/sop-core";
 import type { FastifyInstance, FastifyReply } from "fastify";
 import OpenAI from "openai";
-import { runAgentTurn, type TurnStats } from "../agent/runTurn.ts";
+import { buildStateItem, MAX_STATE_ITEM_LENGTH } from "../agent/prompt.ts";
+import { createEmptyTurnStats, runAgentTurn } from "../agent/runTurn.ts";
 import {
   type ChatTurnLog,
   classifyModelError,
@@ -32,19 +34,6 @@ export interface ChatRouteDependencies {
   models: readonly string[];
   context: WriteContext;
 }
-
-const EMPTY_STATS: TurnStats = {
-  modelSteps: 0,
-  toolRounds: 0,
-  toolRoundCapHit: false,
-  toolCallsAttempted: 0,
-  toolCallsApplied: 0,
-  toolCallsRejected: 0,
-  toolCallsDropped: 0,
-  rejectionCodes: [],
-  inputTokens: 0,
-  outputTokens: 0,
-};
 
 function httpError(
   code: HttpErrorCode,
@@ -138,6 +127,8 @@ export function registerChatRoute(app: FastifyInstance, deps: ChatRouteDependenc
         .send(httpError("payload_too_large", "The conversation is full. Start a new chat."));
     }
 
+    // Refuse before spending anything on the model. The message is added first so the check sees
+    // what the model would see.
     const turnId = context.newId();
     const userMessage: UserMessage = {
       id: context.newId(),
@@ -150,7 +141,18 @@ export function registerChatRoute(app: FastifyInstance, deps: ChatRouteDependenc
       updatedAt: userMessage.createdAt,
       messages: [...session.messages, userMessage],
     };
+    if (
+      buildStateItem({ session: startingSession, allowToolCalls: true }).length >
+      MAX_STATE_ITEM_LENGTH
+    ) {
+      return reply
+        .status(413)
+        .send(
+          httpError("payload_too_large", "The SOP is too large to continue. Start a new chat."),
+        );
+    }
     const gapsBefore = computeGaps(session);
+    const agendaBefore = buildInterviewAgenda(session);
 
     const stream = startNdjsonStream(reply);
     const startedAt = performance.now();
@@ -161,6 +163,7 @@ export function registerChatRoute(app: FastifyInstance, deps: ChatRouteDependenc
       event: "chat_turn" as const,
       turnId,
       sessionId: sessionIdForLog(session.sessionId),
+      agendaTopField: agendaBefore.askNext[0]?.field ?? null,
       blockingGapsBefore: gapsBefore.blockingGapCount,
       advisoryGapsBefore: gapsBefore.advisoryGapCount,
     };
@@ -203,6 +206,7 @@ export function registerChatRoute(app: FastifyInstance, deps: ChatRouteDependenc
         servedByModel: outcome.servedByModel,
         failedAttempts,
         ...outcome.value.stats,
+        readyToReview: buildInterviewAgenda(committed).readyToReview,
         blockingGapsAfter: gapsAfter.blockingGapCount,
         advisoryGapsAfter: gapsAfter.advisoryGapCount,
         messageCount: committed.messages.length,
@@ -225,7 +229,8 @@ export function registerChatRoute(app: FastifyInstance, deps: ChatRouteDependenc
         outcome: aborted ? "aborted" : "failed",
         servedByModel: null,
         failedAttempts,
-        ...EMPTY_STATS,
+        ...createEmptyTurnStats(),
+        readyToReview: null,
         blockingGapsAfter: null,
         advisoryGapsAfter: null,
         messageCount: startingSession.messages.length,

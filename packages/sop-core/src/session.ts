@@ -6,25 +6,45 @@ import {
   claimSchema,
   identifierSchema,
   timestampSchema,
+  totalClaimTextLength,
 } from "./claim.ts";
 import {
   MAX_ASSISTANT_MESSAGE_LENGTH,
   MAX_CLAIMS,
   MAX_HISTORY_ENTRIES,
   MAX_MESSAGES,
+  MAX_NOTE_LENGTH,
   MAX_TOOL_CALLS_PER_MESSAGE,
+  MAX_TOTAL_CLAIM_TEXT,
   MAX_USER_MESSAGE_LENGTH,
 } from "./limits.ts";
 import { SOP_FIELD_NAMES } from "./sopFields.ts";
 import type { WriteContext } from "./writeContext.ts";
 
 export const RECORD_CLAIM_TOOL_NAME = "record_claim";
+export const CORRECT_CLAIM_TOOL_NAME = "correct_claim";
+export const MARK_CLAIM_UNKNOWN_TOOL_NAME = "mark_claim_unknown";
+export const WITHDRAW_CLAIM_TOOL_NAME = "withdraw_claim";
+
+export const AGENT_TOOL_NAMES = [
+  RECORD_CLAIM_TOOL_NAME,
+  CORRECT_CLAIM_TOOL_NAME,
+  MARK_CLAIM_UNKNOWN_TOOL_NAME,
+  WITHDRAW_CLAIM_TOOL_NAME,
+] as const;
+
+export type AgentToolName = (typeof AGENT_TOOL_NAMES)[number];
+
+/** What a claim write did. `unchanged` means the exact same claim was already there. */
+export const CLAIM_CHANGES = ["created", "updated", "unchanged", "withdrawn"] as const;
+export type ClaimChange = (typeof CLAIM_CHANGES)[number];
 
 /** Outcome codes a tool call can report: any claim-write error, or a problem before the write. */
 export const TOOL_OUTCOME_ERROR_CODES = [
   ...CLAIM_WRITE_ERROR_CODES,
   "invalid_arguments",
   "unknown_tool",
+  "withdraw_limit_reached",
 ] as const;
 
 export type ToolOutcomeErrorCode = (typeof TOOL_OUTCOME_ERROR_CODES)[number];
@@ -32,12 +52,17 @@ export type ToolOutcomeErrorCode = (typeof TOOL_OUTCOME_ERROR_CODES)[number];
 /** Provenance of one tool call in a turn. It records what happened, not a copy of the content. */
 export const recordedToolCallSchema = z.object({
   callId: z.string().min(1).max(200),
+  /** A name the model asked for. It can be one we do not offer, so it is not restricted here. */
   toolName: z.string().min(1).max(100),
   /** Null when the arguments did not parse. */
   field: z.enum(SOP_FIELD_NAMES).nullable(),
   requestedStatus: z.enum(CLAIM_STATUSES).nullable(),
   outcome: z.discriminatedUnion("ok", [
-    z.object({ ok: z.literal(true), claimId: identifierSchema }),
+    z.object({
+      ok: z.literal(true),
+      claimId: identifierSchema,
+      change: z.enum(CLAIM_CHANGES),
+    }),
     z.object({ ok: z.literal(false), code: z.enum(TOOL_OUTCOME_ERROR_CODES) }),
   ]),
 });
@@ -71,13 +96,28 @@ export type ChatMessage = z.infer<typeof chatMessageSchema>;
 export type UserMessage = z.infer<typeof userMessageSchema>;
 export type AssistantMessage = z.infer<typeof assistantMessageSchema>;
 
-/** Append-only. Slice 1 writes one entry when an unknown claim is replaced. */
+export const HISTORY_REASONS = [
+  "corrected",
+  "answered_unknown",
+  "marked_unknown",
+  "withdrawn",
+] as const;
+
+export type HistoryReason = (typeof HISTORY_REASONS)[number];
+
+/**
+ * Append-only. Every change to an existing claim writes one entry holding the whole previous claim
+ * and the user message that caused the change, so a change is never silent.
+ */
 export const claimHistoryEntrySchema = z.object({
   entryId: identifierSchema,
   claimId: identifierSchema,
   changedAt: timestampSchema,
   changedBy: z.enum([...CREATOR_TYPES, "system"] as const),
-  reason: z.enum(["replaced"]),
+  sourceMessageId: identifierSchema,
+  reason: z.enum(HISTORY_REASONS),
+  /** Why the change happened, when the claim itself has no place for it: the reason for a withdrawal. */
+  changeNote: z.string().max(MAX_NOTE_LENGTH).nullable(),
   previousClaim: claimSchema,
 });
 
@@ -86,7 +126,8 @@ export type ClaimHistoryEntry = z.infer<typeof claimHistoryEntrySchema>;
 export const SESSION_STATUSES = ["draft", "approved"] as const;
 export type SessionStatus = (typeof SESSION_STATUSES)[number];
 
-export const SESSION_SCHEMA_VERSION = 1;
+/** Version 2 added claim `updatedAt`, step values, `procedureOrder`, and the richer history. */
+export const SESSION_SCHEMA_VERSION = 2;
 
 function findDuplicate(values: readonly string[]): string | undefined {
   const seen = new Set<string>();
@@ -111,6 +152,8 @@ export const sopSessionSchema = z
     status: z.enum(SESSION_STATUSES),
     messages: z.array(chatMessageSchema).max(MAX_MESSAGES),
     claims: z.array(claimSchema).max(MAX_CLAIMS),
+    /** Claim ids of the active `procedure` claims, in the order the steps happen. */
+    procedureOrder: z.array(identifierSchema).max(MAX_CLAIMS),
     claimHistory: z.array(claimHistoryEntrySchema).max(MAX_HISTORY_ENTRIES),
   })
   .superRefine((session, context) => {
@@ -141,6 +184,39 @@ export const sopSessionSchema = z
         ]);
       }
     });
+    session.claimHistory.forEach((entry, index) => {
+      if (!userMessageIds.has(entry.sourceMessageId)) {
+        addIssue("A history entry must cite an existing user message.", [
+          "claimHistory",
+          index,
+          "sourceMessageId",
+        ]);
+      }
+    });
+
+    // Procedure order: unique ids, each an active procedure claim, and every step listed.
+    if (findDuplicate(session.procedureOrder) !== undefined) {
+      addIssue("Procedure order must not repeat a claim.", ["procedureOrder"]);
+    }
+    const claimsById = new Map(session.claims.map((claim) => [claim.claimId, claim]));
+    session.procedureOrder.forEach((claimId, index) => {
+      if (claimsById.get(claimId)?.field !== "procedure") {
+        addIssue("Procedure order may only list active procedure claims.", [
+          "procedureOrder",
+          index,
+        ]);
+      }
+    });
+    const listed = new Set(session.procedureOrder);
+    session.claims.forEach((claim, index) => {
+      if (claim.value?.kind === "step" && !listed.has(claim.claimId)) {
+        addIssue("Every procedure step must appear in the procedure order.", ["claims", index]);
+      }
+    });
+
+    if (totalClaimTextLength(session.claims) > MAX_TOTAL_CLAIM_TEXT) {
+      addIssue("The claims hold more text than a session may.", ["claims"]);
+    }
   });
 
 export type SopSession = z.infer<typeof sopSessionSchema>;
@@ -156,6 +232,7 @@ export function createEmptySession(context: WriteContext): SopSession {
     status: "draft",
     messages: [],
     claims: [],
+    procedureOrder: [],
     claimHistory: [],
   };
 }
