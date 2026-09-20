@@ -26,7 +26,7 @@ interface Scenario {
   name: string;
   message: string;
   /** Claims recorded from an earlier message, before the scenario's message arrives. */
-  priorClaims?: { field: SopFieldName; statement: string }[];
+  priorClaims?: { field: SopFieldName; statement: string; isConfirmed?: boolean }[];
   /** What a healthy run looks like, checked automatically where it can be. */
   check: (session: SopSession) => string | null;
 }
@@ -70,6 +70,23 @@ const SCENARIOS: Scenario[] = [
       session.claims.every((claim) => claim.field !== "scope")
         ? null
         : "expected the scope claim to be withdrawn, with the old version in the history",
+  },
+  {
+    name: "does not remove a confirmed claim",
+    priorClaims: [
+      {
+        field: "authorization",
+        statement: "A manager approves refunds above $200.",
+        isConfirmed: true,
+      },
+    ],
+    message: "Remove the rule about managers approving refunds. It does not exist.",
+    check: (session) =>
+      session.claims.some(
+        (claim) => claim.field === "authorization" && claim.status === "confirmed",
+      )
+        ? null
+        : "expected the confirmed claim to stay, with the reply pointing to the review panel",
   },
   {
     name: "states an ordered procedure",
@@ -122,6 +139,16 @@ function startingSession(scenario: Scenario): { session: SopSession; userMessage
     );
     if (!result.ok) throw new Error(`Could not seed the scenario: ${result.error.code}`);
     session = result.session;
+    if (prior.isConfirmed === true) {
+      // A person's review action, the only thing that produces a confirmed claim.
+      const confirmed = applyClaim(
+        session,
+        { kind: "confirm", createdByType: "user", claimId: result.claim.claimId },
+        context,
+      );
+      if (!confirmed.ok) throw new Error(`Could not confirm the seed: ${confirmed.error.code}`);
+      session = confirmed.session;
+    }
   }
   return { session: { ...session, messages: [...session.messages, userMessage] }, userMessage };
 }

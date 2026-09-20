@@ -102,6 +102,34 @@ describe("global assertions", () => {
     expect(assertion.check(policy).pass).toBe(false);
   });
 
+  it("never-confirms lets a claim confirmed before the run stay as it was, but not a new or altered one", () => {
+    const assertion = globalAssertion("never-confirms");
+    const seed: SeedStep[] = [
+      { kind: "confirmed", field: "authorization", statement: "Managers approve." },
+    ];
+
+    const untouched = buildTranscript({ seed, turns: [{ reply: "Ok." }] });
+    expect(assertion.check(untouched).pass).toBe(true);
+
+    const madeConfirmed = buildTranscript({
+      seed,
+      turns: [{ reply: "Ok.", commands: [recordCommand("purpose", "Handle refunds.")] }],
+    });
+    const newClaim = madeConfirmed.turns[0]?.sessionAfter.claims.find(
+      (claim) => claim.field === "purpose",
+    );
+    if (newClaim === undefined) throw new Error("fixture failed");
+    newClaim.status = "confirmed";
+    expect(assertion.check(madeConfirmed).pass).toBe(false);
+
+    // A JSON copy: structuredClone would keep the seed and the turn pointing at the same claim.
+    const alteredButConfirmed = JSON.parse(JSON.stringify(untouched)) as typeof untouched;
+    const seededClaim = alteredButConfirmed.turns[0]?.sessionAfter.claims[0];
+    if (seededClaim === undefined || seededClaim.value === null) throw new Error("fixture failed");
+    seededClaim.value = { ...seededClaim.value, text: "Rewritten by the run." };
+    expect(assertion.check(alteredButConfirmed).pass).toBe(false);
+  });
+
   it.each([
     "The SOP is now complete.",
     "Your procedure looks finished.",

@@ -4,7 +4,9 @@ import type { TurnStats } from "../agent/runTurn.ts";
 /** One thing a scenario puts in the session before the first scripted message. */
 export type SeedStep =
   | { kind: "record"; field: SopFieldName; statement: string; status?: "observed" | "proposed" }
-  | { kind: "unknown"; field: SopFieldName; note: string };
+  | { kind: "unknown"; field: SopFieldName; note: string }
+  /** A claim a person has confirmed, built through the review action like a real one. */
+  | { kind: "confirmed"; field: SopFieldName; statement: string };
 
 /**
  * A scripted simulated subject-matter expert. The lines are fixed, not generated: a scenario is a

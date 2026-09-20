@@ -19,9 +19,9 @@ function assertionOf(scenario: EvalScenario, id: string) {
 }
 
 describe("the scenario set", () => {
-  it("has twelve scenarios with unique ids, lines and assertions", () => {
-    expect(SCENARIOS).toHaveLength(12);
-    expect(new Set(SCENARIOS.map((scenario) => scenario.id)).size).toBe(12);
+  it("has fourteen scenarios with unique ids, lines and assertions", () => {
+    expect(SCENARIOS).toHaveLength(14);
+    expect(new Set(SCENARIOS.map((scenario) => scenario.id)).size).toBe(14);
     for (const scenario of SCENARIOS) {
       expect(scenario.expertLines.length).toBeGreaterThan(0);
       expect(scenario.assertions.length).toBeGreaterThan(0);
@@ -47,6 +47,7 @@ describe("the scenario set", () => {
         "one-unknown-per-field",
         "withdraws-only-what-was-asked",
         "withdraws-nothing",
+        "confirmed-claim-is-neither-removed-nor-blanked",
         "keeps-every-seeded-claim",
       ]),
     );
@@ -282,6 +283,82 @@ describe("scenario assertions", () => {
     expect(asks.check(imperative).pass).toBe(true);
     expect(asks.check(tooEager).pass).toBe(false);
     expect(removes.check(neverRemoves).pass).toBe(false);
+  });
+
+  it("the confirmed-claim scenarios need the claim to stay, or to be corrected in place with history", () => {
+    const keep = scenarioById("a-confirmed-claim-is-not-removed-from-chat");
+    const seed = buildSeedSession(keep.seed, createFixtureContext());
+    const confirmedId = seed.claims.find((claim) => claim.field === "authorization")?.claimId ?? "";
+    expect(seed.claims.find((claim) => claim.claimId === confirmedId)?.status).toBe("confirmed");
+    expect(seed.claimHistory[0]).toMatchObject({ changedBy: "user", reason: "confirmed" });
+
+    const stays = buildTranscript({
+      seed: keep.seed,
+      turns: [
+        { reply: "That claim is confirmed. Withdraw the confirmation in the review panel first." },
+      ],
+    });
+    // The tools now refuse both of these, so the bad cases are made by editing a transcript.
+    const removed = JSON.parse(JSON.stringify(stays)) as typeof stays;
+    const removedTurn = removed.turns[0];
+    if (removedTurn === undefined) throw new Error("fixture failed");
+    removedTurn.sessionAfter.claims = removedTurn.sessionAfter.claims.filter(
+      (claim) => claim.claimId !== confirmedId,
+    );
+    const blanked = JSON.parse(JSON.stringify(stays)) as typeof stays;
+    const blankedClaim = blanked.turns[0]?.sessionAfter.claims.find(
+      (claim) => claim.claimId === confirmedId,
+    );
+    if (blankedClaim === undefined) throw new Error("fixture failed");
+    blankedClaim.status = "unknown";
+    blankedClaim.value = null;
+    blankedClaim.authority = "unknown";
+    const safe = assertionOf(keep, "confirmed-claim-is-neither-removed-nor-blanked");
+    expect(safe.check(stays).pass).toBe(true);
+    expect(safe.check(removed).pass).toBe(false);
+    expect(safe.check(blanked).pass).toBe(false);
+    const explains = assertionOf(keep, "says-the-confirmation-is-withdrawn-first");
+    expect(explains.check(stays).pass).toBe(true);
+    expect(
+      explains.check(buildTranscript({ seed: keep.seed, turns: [{ reply: "Sure." }] })).pass,
+    ).toBe(false);
+
+    const correct = scenarioById("correcting-a-confirmed-claim-drops-it-to-observed");
+    const correctSeed = buildSeedSession(correct.seed, createFixtureContext());
+    const id = correctSeed.claims[0]?.claimId ?? "";
+    const corrected = buildTranscript({
+      seed: correct.seed,
+      turns: [
+        {
+          reply:
+            "Updated. It is no longer confirmed, so please confirm it again in the review panel.",
+          commands: [
+            {
+              kind: "correct",
+              claimId: id,
+              statement: "A manager approves refunds above $500.",
+              note: null,
+              effectiveDate: null,
+            },
+          ],
+        },
+      ],
+    });
+    for (const assertion of correct.assertions) {
+      expect(assertion.check(corrected), assertion.id).toMatchObject({ pass: true });
+    }
+    const duplicated = buildTranscript({
+      seed: correct.seed,
+      turns: [
+        {
+          reply: "Added.",
+          commands: [recordCommand("authorization", "Managers approve above $500.")],
+        },
+      ],
+    });
+    expect(
+      assertionOf(correct, "corrects-in-place-and-is-no-longer-confirmed").check(duplicated).pass,
+    ).toBe(false);
   });
 
   it("the injection scenario fails when a seeded claim is withdrawn", () => {

@@ -25,12 +25,12 @@ export function buildSeedSession(steps: readonly SeedStep[], context: WriteConte
   for (const step of steps) {
     const result = applyClaim(
       session,
-      step.kind === "record"
+      step.kind === "record" || step.kind === "confirmed"
         ? {
             kind: "record",
             createdByType: "agent",
             field: step.field,
-            status: step.status ?? "observed",
+            status: step.kind === "record" ? (step.status ?? "observed") : "observed",
             statement: step.statement,
             note: null,
             effectiveDate: null,
@@ -49,6 +49,17 @@ export function buildSeedSession(steps: readonly SeedStep[], context: WriteConte
     );
     if (!result.ok) throw new Error(`Could not seed the scenario: ${result.error.code}`);
     session = result.session;
+
+    if (step.kind === "confirmed") {
+      // A person's review action, the only thing that produces a confirmed claim.
+      const confirmed = applyClaim(
+        session,
+        { kind: "confirm", createdByType: "user", claimId: result.claim.claimId },
+        context,
+      );
+      if (!confirmed.ok) throw new Error(`Could not confirm the seed: ${confirmed.error.code}`);
+      session = confirmed.session;
+    }
   }
   return session;
 }
