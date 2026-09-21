@@ -32,6 +32,21 @@ describe("loadConfig", () => {
     });
   });
 
+  it("keeps only the origin of the web address, so a trailing slash or a path cannot break CORS", () => {
+    for (const address of [
+      "https://sop-agent.vercel.app",
+      "https://sop-agent.vercel.app/",
+      "https://sop-agent.vercel.app/some/page?x=1",
+    ]) {
+      expect(loadConfig({ OPENAI_API_KEY: "key", WEB_ORIGIN: address }).webOrigin).toBe(
+        "https://sop-agent.vercel.app",
+      );
+    }
+    expect(
+      loadConfig({ OPENAI_API_KEY: "key", WEB_ORIGIN: "http://localhost:3000/" }).webOrigin,
+    ).toBe("http://localhost:3000");
+  });
+
   it("fails fast with a clear English message when the API key is missing or empty", () => {
     for (const environment of [{}, { OPENAI_API_KEY: "" }]) {
       expect(() => loadConfig(environment)).toThrow(ConfigurationError);

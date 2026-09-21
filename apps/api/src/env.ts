@@ -9,7 +9,12 @@ const environmentSchema = z.object({
     .min(1, "Missing. Set it in the .env file at the repository root."),
   API_HOST: z.string().min(1).default("127.0.0.1"),
   PORT: z.coerce.number().int().min(1).max(65_535).default(4000),
-  WEB_ORIGIN: z.url().default("http://localhost:3000"),
+  // Reduced to scheme, host and port: the browser sends exactly that as its origin, and an address
+  // copied with a trailing slash or a path would otherwise never match and block every request.
+  WEB_ORIGIN: z
+    .url()
+    .transform((address) => new URL(address).origin)
+    .default("http://localhost:3000"),
   LOG_LEVEL: z.enum(LOG_LEVELS).default("info"),
 });
 

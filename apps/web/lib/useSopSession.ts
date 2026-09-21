@@ -20,7 +20,11 @@ import { checkFileBeforeUpload, requestDocumentExtraction } from "./extractDocum
 import { saveBlobAsFile } from "./saveBlobAsFile.ts";
 import { loadSession, saveSession, startFreshSession } from "./sessionStore.ts";
 
-const API_BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://localhost:4000";
+// A trailing slash on the configured address would turn every request path into "//chat".
+const API_BASE_URL = (process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://localhost:4000").replace(
+  /\/+$/,
+  "",
+);
 
 const DOWNLOAD_START_FAILURE_MESSAGE =
   "Your browser could not start the download. Try again, or check its download settings.";

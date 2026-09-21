@@ -1,0 +1,23 @@
+# Render blueprint for the API. The web app is deployed separately, on Vercel (see README.md, "Deploy").
+services:
+  - type: web
+    name: sop-agent-api
+    runtime: node
+    plan: free
+    buildCommand: corepack enable && pnpm install --frozen-lockfile
+    startCommand: pnpm --filter @sop-agent/api start
+    # The API answers this without touching the model, so a restart check costs nothing.
+    healthCheckPath: /health
+    envVars:
+      - key: NODE_VERSION
+        value: 22
+      # Render routes traffic to the container's public interface, not to localhost.
+      - key: API_HOST
+        value: 0.0.0.0
+      # Set both in the Render dashboard. They are never written to this file.
+      - key: OPENAI_API_KEY
+        sync: false
+      # The exact address of the deployed web app, for example https://sop-agent.vercel.app
+      # (scheme and host only: no path, no trailing slash). It is the one origin the API allows.
+      - key: WEB_ORIGIN
+        sync: false

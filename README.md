@@ -133,9 +133,51 @@ the interview agenda (which fields to ask next, computed in code) as a separate 
   OpenAI, with `store: false` on every call.
 - **Limits on uploads:** a PDF, Word (.docx), Markdown or text file up to 2 MiB, 60 PDF pages and
   100,000 characters. Scanned PDFs are not supported (there is no OCR).
-- **Not for a public deployment yet.** There is no login and no rate limit, and the API spends model
-  money for anyone who can reach it. It listens on `127.0.0.1` by default. Two things are needed
-  before exposing it: rate limiting, and a hard timeout for a document parser that never returns.
+- **There is no login and no rate limit.** Anyone who can reach the API spends model money. It
+  listens on `127.0.0.1` by default, so it is private until you deploy it. If you do, cap what the
+  key can spend first (see "Deploy").
+
+## Deploy
+
+The web app and the API are separate, so they deploy separately: the API on Render, the web app on
+Vercel. Nothing is stored on either, so a restart loses nothing except a chat that is open in a tab.
+
+**Before anything else, cap what the key can spend.** The API has no login and no rate limit, so
+anyone who finds the address can spend the key's credit, and nothing in this repository stops them.
+The only hard limit is on the OpenAI side, and it has to be one that cannot be exceeded:
+- Create a separate project for this app and use that project's key, so nothing else is exposed.
+- Pay with prepaid credit and switch automatic recharge off, and load only what you are willing to
+  lose. When the balance is gone, requests fail, which is the limit you want.
+- A monthly budget on the project is worth setting for the alert email, but do not count on it to
+  block requests: check in the OpenAI dashboard whether your account's budget stops requests or only
+  warns.
+- Do not post the web address anywhere public, and take the deployment down when the review is over.
+
+**1. The API on Render**
+1. Push the repository to GitHub, then in Render choose New, then Blueprint, and select it. Render
+   reads `render.yaml`.
+2. Render asks for the two variables that are left out of the file: `OPENAI_API_KEY`, and
+   `WEB_ORIGIN`. You do not have the web address yet, so enter `https://placeholder.invalid` and fix
+   it in step 3.
+3. When it is live, open `https://<your-service>.onrender.com/health`. It should answer
+   `{"status":"ok"}`. Keep this address for the next step.
+
+**2. The web app on Vercel**
+1. In Vercel choose Add New, then Project, and import the same repository.
+2. Set Root Directory to `apps/web`, and leave the framework as Next.js. Vercel installs from the
+   repository root, so the workspace package is found.
+3. Add the environment variable `NEXT_PUBLIC_API_BASE_URL` with the Render address from above (scheme
+   and host only, no trailing slash). It is read when the app is built, so changing it later needs a
+   new deployment.
+4. Deploy, and note the address Vercel gives you.
+
+**3. Point the API at the web app.** In Render, set `WEB_ORIGIN` to the Vercel address exactly as it
+appears (for example `https://sop-agent.vercel.app`), and redeploy. The API allows this one origin
+only, so a browser on any other address, including a Vercel preview deployment, is refused.
+
+Things to expect on the free plans: Render puts a service to sleep after fifteen idle minutes, so the
+first request after a pause takes about a minute. Every reply is streamed, and the browser shows it
+as it arrives. If the first message seems stuck, wait for the service to wake up.
 
 ## Known limits
 
@@ -144,4 +186,7 @@ the interview agenda (which fields to ask next, computed in code) as a separate 
 - Two uploads with the same file name count as one source, so a revised file with the same name cannot
   conflict with the earlier one.
 - PDFs use a standard font, so a character outside Latin-1 prints as a visible `<U+XXXX>` marker.
+- A document parser that never returns would block the API until Render's health check restarts it.
+  The size, page, section and text limits and a two-at-a-time cap make this unlikely, and it costs
+  no model money, so there is no separate hard timeout.
 - Everything is English, including the agent's replies, whatever language the person writes in.
