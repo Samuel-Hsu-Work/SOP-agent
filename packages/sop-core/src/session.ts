@@ -8,6 +8,7 @@ import {
   timestampSchema,
   totalClaimTextLength,
 } from "./claim.ts";
+import { consistencyReviewSchema } from "./consistencyReviewSchema.ts";
 import {
   MAX_ASSISTANT_MESSAGE_LENGTH,
   MAX_CLAIMS,
@@ -169,8 +170,9 @@ export type SessionStatus = (typeof SESSION_STATUSES)[number];
  * Version 3 added the approval time, the advisory-gap acknowledgements, and review history entries.
  * Version 4 added the download time of the approved SOP's PDF.
  * Version 5 added document sources with a citation, and the link between two conflicting claims.
+ * Version 6 added the consistency review: questions about what the claims do not say together.
  */
-export const SESSION_SCHEMA_VERSION = 5;
+export const SESSION_SCHEMA_VERSION = 6;
 
 /** A person's statement that they saw an advisory gap and accept it. It carries no free text. */
 export const advisoryAcknowledgementSchema = z.object({
@@ -218,6 +220,11 @@ export const sopSessionSchema = z
     advisoryAcknowledgements: z
       .array(advisoryAcknowledgementSchema)
       .max(ADVISORY_FIELD_NAMES.length),
+    /**
+     * The latest consistency review, or null before the first one. It holds questions for the agent
+     * to ask, never claims, and nothing in it gates an approval or reaches the PDF.
+     */
+    consistencyReview: consistencyReviewSchema.nullable(),
   })
   .superRefine((session, context) => {
     const addIssue = (message: string, path: (string | number)[]) =>
@@ -330,5 +337,6 @@ export function createEmptySession(context: WriteContext): SopSession {
     approvedAt: null,
     downloadedAt: null,
     advisoryAcknowledgements: [],
+    consistencyReview: null,
   };
 }

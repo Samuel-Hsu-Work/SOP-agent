@@ -1,5 +1,6 @@
 import type { Claim, ClaimStatus } from "./claim.ts";
 import { computeGaps } from "./computeGaps.ts";
+import { type ConsistencyQuestion, nextConsistencyQuestion } from "./consistencyReview.ts";
 import type { SopSession } from "./session.ts";
 import { getFieldDefinition, type SopFieldName } from "./sopFields.ts";
 import { quantitiesIn } from "./text.ts";
@@ -58,6 +59,12 @@ export interface InterviewAgenda {
   askNext: AgendaQuestion[];
   /** Fields with a gap that the agent must not ask about again. */
   doNotAsk: AgendaExclusion[];
+  /**
+   * One thing the recorded claims do not say together, put as a question, or null. Present only
+   * when no blocking gap remains, and it comes before the advisory fields in `askNext`. It is a
+   * question and never a fact: nothing is recorded because it exists.
+   */
+  consistencyQuestion: ConsistencyQuestion | null;
   /** True when no blocking gap remains. Only then may the agent say the SOP is ready to review. */
   readyToReview: boolean;
   blockingGapsRemaining: number;
@@ -136,6 +143,7 @@ export function buildInterviewAgenda(session: SopSession): InterviewAgenda {
   return {
     askNext,
     doNotAsk,
+    consistencyQuestion: nextConsistencyQuestion(session),
     readyToReview: report.blockingGapCount === 0,
     blockingGapsRemaining: report.blockingGapCount,
     advisoryGapsRemaining: report.advisoryGapCount,

@@ -74,6 +74,34 @@ export type {
   GapReport,
 } from "./computeGaps.ts";
 export { computeGaps } from "./computeGaps.ts";
+export type { ConsistencyQuestion, MergeConsistencyResult } from "./consistencyReview.ts";
+export {
+  consistencyBasisOf,
+  currentConsistencyReview,
+  keepConsistencyReviewForCurrentClaims,
+  markConsistencyQuestionOffered,
+  mergeConsistencyAnalysis,
+  needsConsistencyReview,
+  nextConsistencyQuestion,
+  statedClaimsInReadingOrder,
+  statesOutOfTime,
+} from "./consistencyReview.ts";
+export type {
+  ConsistencyAnalysisOutput,
+  ConsistencyCategory,
+  ConsistencyFinding,
+  ConsistencyReview,
+} from "./consistencyReviewSchema.ts";
+export {
+  CONSISTENCY_CATEGORIES,
+  consistencyAnalysisOutputSchema,
+  consistencyFindingSchema,
+  consistencyReviewSchema,
+  MAX_CONSISTENCY_FINDINGS,
+  MAX_CONSISTENCY_QUESTION_LENGTH,
+  MAX_CONSISTENCY_QUESTIONS_PER_SESSION,
+  MAX_RELATED_CLAIMS,
+} from "./consistencyReviewSchema.ts";
 export { CONFLICT_TOPIC_OVERLAP, findConflictPartner } from "./detectConflicts.ts";
 export type {
   ClaimDraft,
