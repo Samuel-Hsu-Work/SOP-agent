@@ -10,6 +10,7 @@ import pino from "pino";
 import type { ModelClient } from "./model/modelClient.ts";
 import { registerChatRoute } from "./routes/chat.ts";
 import { registerDocumentExtractRoute } from "./routes/documentExtract.ts";
+import { HTTP_ERROR_MESSAGES, httpError } from "./routes/httpError.ts";
 import { registerSopPdfRoute } from "./routes/sopPdf.ts";
 
 /**
@@ -28,24 +29,6 @@ export interface ServerDependencies {
   logStream?: NodeJS.WritableStream;
   context?: WriteContext;
 }
-
-const ERROR_MESSAGES: Record<HttpErrorCode, string> = {
-  invalid_request: "The request is not valid.",
-  session_approved: "The SOP is approved, so the chat is read-only.",
-  sop_not_approved:
-    "This SOP cannot be exported. It must be approved, with every gap and suggestion resolved.",
-  payload_too_large: "The request is too large.",
-  unsupported_media_type: "The request body is not in a format this endpoint accepts.",
-  unsupported_document_type:
-    "That file is not a PDF, Word (.docx), Markdown or plain-text document, or it is not what its name says.",
-  document_has_no_text:
-    "That PDF has no text to read. It may be a scan or an image, and scanned documents are not supported.",
-  document_unreadable:
-    "That document could not be read. It may be encrypted, damaged, or too complex.",
-  model_unavailable: "The document reader is unavailable right now. Try again in a moment.",
-  extraction_busy: "Another document is being read. Try again in a moment.",
-  internal_error: "Something went wrong on the server.",
-};
 
 /** Builds the server without starting it, so tests can send requests to it directly. */
 export async function buildServer(deps: ServerDependencies): Promise<FastifyInstance> {
@@ -79,7 +62,7 @@ export async function buildServer(deps: ServerDependencies): Promise<FastifyInst
             ? "invalid_request"
             : "internal_error";
     request.log.warn({ event: "request_error", statusCode, errorCode: error.code });
-    return reply.status(statusCode).send({ error: { code, message: ERROR_MESSAGES[code] } });
+    return reply.status(statusCode).send(httpError(code, HTTP_ERROR_MESSAGES[code]));
   });
 
   // The one request line: method, path, status, and time. The query string is dropped because it

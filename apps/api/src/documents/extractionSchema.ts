@@ -22,6 +22,4 @@ export const extractionOutputSchema = z.object({
   ),
 });
 
-export type ExtractionOutput = z.infer<typeof extractionOutputSchema>;
-
 export const EXTRACTION_SCHEMA_NAME = "sop_claim_extraction";

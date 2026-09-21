@@ -24,6 +24,3 @@ export const EXTRACTION_MAX_OUTPUT_TOKENS = 8_000;
 
 /** How many documents may be read at once. Resource protection, not a per-user rate limit. */
 export const MAX_CONCURRENT_EXTRACTIONS = 2;
-
-/** The longest file name kept. Longer names are cut, never rejected. */
-export const MAX_FILE_NAME_LENGTH = 200;

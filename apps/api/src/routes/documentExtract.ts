@@ -16,7 +16,7 @@ import { sanitizeFileName } from "../documents/sanitizeFileName.ts";
 import type { DocumentExtractLog, DocumentRefusalReason, ModelFailureKind } from "../logging.ts";
 import type { ModelClient } from "../model/modelClient.ts";
 import { ModelOutputError, ModelRefusalError } from "../model/modelFallback.ts";
-import { httpError } from "./httpError.ts";
+import { HTTP_ERROR_MESSAGES, httpError } from "./httpError.ts";
 
 export interface DocumentExtractRouteDependencies {
   modelClient: ModelClient;
@@ -189,7 +189,7 @@ export async function registerDocumentExtractRoute(
         log.fileKind = fileKindOf(fileName);
 
         if (activeExtractions >= MAX_CONCURRENT_EXTRACTIONS) {
-          return refuse(reply, "busy", 503, "extraction_busy", "Another document is being read.");
+          return refuse(reply, "busy", 503, "extraction_busy", HTTP_ERROR_MESSAGES.extraction_busy);
         }
         activeExtractions += 1;
         try {
@@ -214,7 +214,7 @@ export async function registerDocumentExtractRoute(
                 error.category,
                 failure.status,
                 failure.code,
-                failure.message ?? httpMessageFor(failure.code),
+                failure.message ?? HTTP_ERROR_MESSAGES[failure.code],
               );
             }
             throw error;
@@ -251,7 +251,7 @@ export async function registerDocumentExtractRoute(
                 "model_unavailable",
                 503,
                 "model_unavailable",
-                httpMessageFor("model_unavailable"),
+                HTTP_ERROR_MESSAGES.model_unavailable,
               );
             }
             throw error;
@@ -295,20 +295,4 @@ export async function registerDocumentExtractRoute(
       },
     );
   });
-}
-
-function httpMessageFor(code: HttpErrorCode): string {
-  // The shared error handler owns the wording for these; this mirrors it for a direct refusal.
-  switch (code) {
-    case "unsupported_document_type":
-      return "That file is not a PDF, Word (.docx), Markdown or plain-text document, or it is not what its name says.";
-    case "document_has_no_text":
-      return "That PDF has no text to read. It may be a scan or an image, and scanned documents are not supported.";
-    case "document_unreadable":
-      return "That document could not be read. It may be encrypted, damaged, or too complex.";
-    case "model_unavailable":
-      return "The document reader is unavailable right now. Try again in a moment.";
-    default:
-      return "The request is not valid.";
-  }
 }

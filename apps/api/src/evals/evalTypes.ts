@@ -76,8 +76,3 @@ export interface Assertion {
   description: string;
   check(transcript: Transcript): AssertionResult;
 }
-
-export interface TrialOutcome {
-  trial: number;
-  results: Record<string, AssertionResult>;
-}
