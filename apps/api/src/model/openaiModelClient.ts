@@ -11,8 +11,13 @@ import type {
 } from "./modelClient.ts";
 import { ModelOutputError, ModelRefusalError } from "./modelFallback.ts";
 
-/** Room for one interview turn: a question, a short reply, and a few tool calls. */
-const MAX_OUTPUT_TOKENS = 2_000;
+/**
+ * Room for one model step: a question, a short reply, and the tool calls that record a whole
+ * process described at once (up to MAX_TOOL_CALLS_PER_MESSAGE of them), plus the model's reasoning.
+ * Only the tokens used are billed. A step that runs out of room makes the whole turn fail, so this
+ * has to stay well above what that many tool calls need.
+ */
+const MAX_OUTPUT_TOKENS = 12_000;
 
 /**
  * Asks the provider to return encrypted reasoning items, which a multi-step turn must echo back
