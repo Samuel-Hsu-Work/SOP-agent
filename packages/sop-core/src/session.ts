@@ -25,12 +25,14 @@ export const RECORD_CLAIM_TOOL_NAME = "record_claim";
 export const CORRECT_CLAIM_TOOL_NAME = "correct_claim";
 export const MARK_CLAIM_UNKNOWN_TOOL_NAME = "mark_claim_unknown";
 export const WITHDRAW_CLAIM_TOOL_NAME = "withdraw_claim";
+export const RESOLVE_CONFLICT_TOOL_NAME = "resolve_conflict";
 
 export const AGENT_TOOL_NAMES = [
   RECORD_CLAIM_TOOL_NAME,
   CORRECT_CLAIM_TOOL_NAME,
   MARK_CLAIM_UNKNOWN_TOOL_NAME,
   WITHDRAW_CLAIM_TOOL_NAME,
+  RESOLVE_CONFLICT_TOOL_NAME,
 ] as const;
 
 export type AgentToolName = (typeof AGENT_TOOL_NAMES)[number];
@@ -45,6 +47,7 @@ export const TOOL_OUTCOME_ERROR_CODES = [
   "invalid_arguments",
   "unknown_tool",
   "withdraw_limit_reached",
+  "conflict_resolution_limit_reached",
 ] as const;
 
 export type ToolOutcomeErrorCode = (typeof TOOL_OUTCOME_ERROR_CODES)[number];
@@ -103,6 +106,8 @@ export const HISTORY_REASONS = [
   "withdrawn",
   "confirmed",
   "rejected",
+  "conflict_detected",
+  "conflict_resolved",
 ] as const;
 
 export type HistoryReason = (typeof HISTORY_REASONS)[number];
@@ -120,7 +125,7 @@ export const REVIEW_HISTORY_REASONS = [
  * An agent's change cites the user message that caused it. A person's review action (a button
  * click) has no message, so its entry is attributed to the user and cites none: inventing a
  * message would put words in the transcript, and citing the last one would blame a sentence that
- * did not cause it.
+ * did not cause it. Finding a conflict is the system's own act, with no message either.
  */
 export const claimHistoryEntrySchema = z
   .object({
@@ -136,16 +141,20 @@ export const claimHistoryEntrySchema = z
   })
   .superRefine((entry, context) => {
     const isReview = (REVIEW_HISTORY_REASONS as readonly string[]).includes(entry.reason);
+    const isDetection = entry.reason === "conflict_detected";
     const addIssue = (message: string, path: string[]) =>
       context.addIssue({ code: "custom", message, path });
 
     if (isReview && (entry.changedBy !== "user" || entry.sourceMessageId !== null)) {
       addIssue("A review action is made by the user and cites no message.", ["reason"]);
     }
-    if (!isReview && entry.changedBy === "user") {
-      addIssue("Only a review action is attributed to the user.", ["changedBy"]);
+    if (isDetection && (entry.changedBy !== "system" || entry.sourceMessageId !== null)) {
+      addIssue("Finding a conflict is made by the system and cites no message.", ["reason"]);
     }
-    if (!isReview && entry.sourceMessageId === null) {
+    if (!isReview && !isDetection && (entry.changedBy === "user" || entry.changedBy === "system")) {
+      addIssue("Only a review action or a found conflict has no agent behind it.", ["changedBy"]);
+    }
+    if (!isReview && !isDetection && entry.sourceMessageId === null) {
       addIssue("A change other than a review action must cite a message.", ["sourceMessageId"]);
     }
   });
@@ -159,8 +168,9 @@ export type SessionStatus = (typeof SESSION_STATUSES)[number];
  * Version 2 added claim `updatedAt`, step values, `procedureOrder`, and the richer history.
  * Version 3 added the approval time, the advisory-gap acknowledgements, and review history entries.
  * Version 4 added the download time of the approved SOP's PDF.
+ * Version 5 added document sources with a citation, and the link between two conflicting claims.
  */
-export const SESSION_SCHEMA_VERSION = 4;
+export const SESSION_SCHEMA_VERSION = 5;
 
 /** A person's statement that they saw an advisory gap and accept it. It carries no free text. */
 export const advisoryAcknowledgementSchema = z.object({
@@ -227,7 +237,9 @@ export const sopSessionSchema = z
       session.messages.filter((message) => message.role === "user").map((message) => message.id),
     );
     session.claims.forEach((claim, index) => {
-      if (!userMessageIds.has(claim.source.reference.messageId)) {
+      const { reference } = claim.source;
+      // A document claim cites its document, not a message, so only a message reference is checked.
+      if (reference.kind === "message" && !userMessageIds.has(reference.messageId)) {
         addIssue("A claim must cite an existing user message.", [
           "claims",
           index,
@@ -247,11 +259,29 @@ export const sopSessionSchema = z
       }
     });
 
+    // A conflict is a pair: each claim names the other, they are in one field, and both are in conflict.
+    const claimsById = new Map(session.claims.map((claim) => [claim.claimId, claim]));
+    session.claims.forEach((claim, index) => {
+      if (claim.conflictsWithClaimId === null) return;
+      const partner = claimsById.get(claim.conflictsWithClaimId);
+      if (
+        partner === undefined ||
+        partner.claimId === claim.claimId ||
+        partner.field !== claim.field ||
+        partner.conflictsWithClaimId !== claim.claimId
+      ) {
+        addIssue("A conflict must be a pair of claims in one field that name each other.", [
+          "claims",
+          index,
+          "conflictsWithClaimId",
+        ]);
+      }
+    });
+
     // Procedure order: unique ids, each an active procedure claim, and every step listed.
     if (findDuplicate(session.procedureOrder) !== undefined) {
       addIssue("Procedure order must not repeat a claim.", ["procedureOrder"]);
     }
-    const claimsById = new Map(session.claims.map((claim) => [claim.claimId, claim]));
     session.procedureOrder.forEach((claimId, index) => {
       if (claimsById.get(claimId)?.field !== "procedure") {
         addIssue("Procedure order may only list active procedure claims.", [

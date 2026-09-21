@@ -1,5 +1,13 @@
 import { z } from "zod";
-import { MAX_IDENTIFIER_LENGTH, MAX_NOTE_LENGTH, MAX_STATEMENT_LENGTH } from "./limits.ts";
+import {
+  MAX_DOCUMENT_LOCATION_LENGTH,
+  MAX_DOCUMENT_NAME_LENGTH,
+  MAX_IDENTIFIER_LENGTH,
+  MAX_NOTE_LENGTH,
+  MAX_QUOTE_LENGTH,
+  MAX_STATEMENT_LENGTH,
+  MIN_QUOTE_LENGTH,
+} from "./limits.ts";
 import { SOP_FIELD_NAMES } from "./sopFields.ts";
 
 export const CLAIM_STATUSES = [
@@ -46,8 +54,8 @@ export const AUTHORITY_TIERS = [
 
 export type AuthorityTier = (typeof AUTHORITY_TIERS)[number];
 
-/** Slice 2 still knows conversational sources only. Document sources join in slice 5. */
-export const SOURCE_TYPES = ["employee_statement", "agent_suggestion"] as const;
+/** Where a claim came from. `policy_document` is a claim read from an uploaded document. */
+export const SOURCE_TYPES = ["employee_statement", "agent_suggestion", "policy_document"] as const;
 export type SourceType = (typeof SOURCE_TYPES)[number];
 
 export const CLAIM_WRITE_ERROR_CODES = [
@@ -88,13 +96,30 @@ export const claimValueSchema = z.discriminatedUnion("kind", [
 
 export type ClaimValue = z.infer<typeof claimValueSchema>;
 
+/**
+ * A citation into an uploaded document. The file itself is never kept, so the citation is the whole
+ * of the evidence: the API proved the quote exists in the cited section before a claim was written.
+ */
+export const documentCitationSchema = z.object({
+  /** The uploaded file's name, sanitized. Shown to a person and never sent to a model. */
+  documentName: z.string().min(1).max(MAX_DOCUMENT_NAME_LENGTH),
+  /** The section that holds the quote, such as "p.4" or "§ Approval authority". Set by code. */
+  location: z.string().min(1).max(MAX_DOCUMENT_LOCATION_LENGTH),
+  /** Verbatim text from that section. */
+  quote: z.string().min(MIN_QUOTE_LENGTH).max(MAX_QUOTE_LENGTH),
+});
+
+export type DocumentCitation = z.infer<typeof documentCitationSchema>;
+
 const claimSourceSchema = z.object({
   type: z.enum(SOURCE_TYPES),
-  reference: z.object({
-    kind: z.literal("message"),
-    messageId: identifierSchema,
-  }),
+  reference: z.discriminatedUnion("kind", [
+    z.object({ kind: z.literal("message"), messageId: identifierSchema }),
+    z.object({ kind: z.literal("document"), citation: documentCitationSchema }),
+  ]),
 });
+
+export type ClaimSource = z.infer<typeof claimSourceSchema>;
 
 /**
  * Every persisted field uses null, never an optional property: JSON.stringify silently drops
@@ -115,6 +140,11 @@ export const claimSchema = z
     effectiveDate: calendarDateSchema.nullable(),
     note: z.string().max(MAX_NOTE_LENGTH).nullable(),
     createdByType: z.enum(CREATOR_TYPES),
+    /**
+     * The other half of a conflict pair. Set if and only if the status is `conflict`. A conflicting
+     * claim keeps its own value, source and authority, so both sides can be shown as they were.
+     */
+    conflictsWithClaimId: identifierSchema.nullable(),
     createdAt: timestampSchema,
     updatedAt: timestampSchema,
   })
@@ -149,6 +179,32 @@ export const claimSchema = z
       ]);
     }
 
+    const isDocumentSource = claim.source.type === "policy_document";
+    if (isDocumentSource !== (claim.source.reference.kind === "document")) {
+      addIssue("A document source cites a document, and every other source cites a message.", [
+        "source",
+      ]);
+    }
+
+    if (claim.status === "extracted") {
+      if (
+        !isDocumentSource ||
+        claim.authority !== "official_policy" ||
+        claim.createdByType !== "extraction"
+      ) {
+        addIssue(
+          "An extracted claim comes from a document, by extraction, with policy authority.",
+          ["status"],
+        );
+      }
+    }
+
+    if ((claim.status === "conflict") !== (claim.conflictsWithClaimId !== null)) {
+      addIssue("A claim points at its conflict partner if and only if it is in conflict.", [
+        "conflictsWithClaimId",
+      ]);
+    }
+
     if (claim.status === "observed") {
       if (claim.source.type !== "employee_statement" || claim.authority !== "observed_practice") {
         addIssue("An observed claim comes from an employee statement.", ["status"]);
@@ -163,10 +219,23 @@ export const claimSchema = z
 
 export type Claim = z.infer<typeof claimSchema>;
 
-/** The text that active claims and their notes hold together, for the session-wide cap. */
+function citationTextLength(claim: Claim): number {
+  const { reference } = claim.source;
+  return reference.kind === "document"
+    ? reference.citation.quote.length +
+        reference.citation.location.length +
+        reference.citation.documentName.length
+    : 0;
+}
+
+/** The text that active claims, their notes and their citations hold together, for the session-wide cap. */
 export function totalClaimTextLength(claims: readonly Claim[]): number {
   return claims.reduce(
-    (total, claim) => total + (claim.value?.text.length ?? 0) + (claim.note?.length ?? 0),
+    (total, claim) =>
+      total +
+      (claim.value?.text.length ?? 0) +
+      (claim.note?.length ?? 0) +
+      citationTextLength(claim),
     0,
   );
 }

@@ -2,6 +2,7 @@ import {
   CLAIM_STATUSES,
   type Claim,
   type ClaimStatus,
+  type DocumentCitation,
   type SourceType,
   UNRESOLVED_STATUSES,
 } from "./claim.ts";
@@ -48,6 +49,10 @@ export interface SopDocumentItem {
   sourceType: SourceType;
   note: string | null;
   effectiveDate: string | null;
+  /** The document and quote behind a claim read from a document. Null for anything said in the interview. */
+  citation: DocumentCitation | null;
+  /** The other half of a conflict, so a reader can pair the two sides. Null for any other status. */
+  conflictsWithClaimId: string | null;
   /**
    * Where the item came from, worded once here so the preview and the PDF say the same thing.
    * An unknown item's note is its open-item text, so it is never repeated in this line.
@@ -104,6 +109,7 @@ function gapLabelFor(gap: FieldGap | null, isAcknowledged: boolean): GapLabel | 
 const SOURCE_LABELS: Readonly<Record<SourceType, string>> = {
   employee_statement: "from the interview",
   agent_suggestion: "suggested by the assistant",
+  policy_document: "from an uploaded document",
 };
 
 /**
@@ -113,11 +119,18 @@ const SOURCE_LABELS: Readonly<Record<SourceType, string>> = {
  */
 function sourceLineFor(claim: Claim): string {
   const hasText = claim.value !== null;
+  const { reference } = claim.source;
   const noteReplacesLabel =
     claim.source.type === "agent_suggestion" && hasText && claim.note !== null;
-  const parts = [noteReplacesLabel ? claim.note : SOURCE_LABELS[claim.source.type]];
+  const label =
+    reference.kind === "document"
+      ? `from ${reference.citation.documentName}, ${reference.citation.location}`
+      : noteReplacesLabel
+        ? claim.note
+        : SOURCE_LABELS[claim.source.type];
+  const parts = [label];
   if (claim.effectiveDate !== null) parts.push(`effective ${claim.effectiveDate}`);
-  if (claim.source.type === "employee_statement" && hasText && claim.note !== null) {
+  if (claim.source.type !== "agent_suggestion" && hasText && claim.note !== null) {
     parts.push(claim.note);
   }
   return parts.join(", ");
@@ -177,6 +190,9 @@ export function buildSopDocument(session: SopSession): SopDocument {
           sourceType: claim.source.type,
           note: claim.note,
           effectiveDate: claim.effectiveDate,
+          citation:
+            claim.source.reference.kind === "document" ? claim.source.reference.citation : null,
+          conflictsWithClaimId: claim.conflictsWithClaimId,
           sourceLine: sourceLineFor(claim),
           isUnresolved: (UNRESOLVED_STATUSES as readonly ClaimStatus[]).includes(claim.status),
         }),

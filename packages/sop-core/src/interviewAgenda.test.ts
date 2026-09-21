@@ -122,23 +122,100 @@ describe("buildInterviewAgenda", () => {
 
   it("keeps asking about a field that has a conflict", () => {
     const { session, messageId } = setup();
-    const conflict = buildClaim({
-      claimId: "c1",
-      field: "purpose",
-      status: "conflict",
-      source: { type: "employee_statement", reference: { kind: "message", messageId } },
+    const half = (claimId: string, partner: string) =>
+      buildClaim({
+        claimId,
+        field: "purpose",
+        status: "conflict",
+        conflictsWithClaimId: partner,
+        source: { type: "employee_statement", reference: { kind: "message", messageId } },
+      });
+    const agenda = buildInterviewAgenda({
+      ...session,
+      claims: [half("c1", "c2"), half("c2", "c1")],
     });
-    const agenda = buildInterviewAgenda({ ...session, claims: [conflict] });
-    expect(agenda.askNext[0]).toMatchObject({ field: "purpose", reason: "unresolved" });
+    expect(agenda.askNext[0]).toMatchObject({ field: "purpose", reason: "conflict" });
+  });
+
+  it("puts one conflict pair to the user, each claim with the partner it points at", () => {
+    const { session, messageId } = setup();
+    const spokenSource = {
+      type: "employee_statement",
+      reference: { kind: "message", messageId },
+    } as const;
+    const documentSource = {
+      type: "policy_document",
+      reference: {
+        kind: "document",
+        citation: { documentName: "policy.md", location: "§ Rules", quote: "A verbatim quote." },
+      },
+    } as const;
+    const inConflict = (
+      claimId: string,
+      partner: string,
+      source: typeof spokenSource | typeof documentSource,
+    ) =>
+      buildClaim({
+        claimId,
+        field: "authorization",
+        status: "conflict",
+        conflictsWithClaimId: partner,
+        source,
+      });
+    // Ordered so that the first two conflict claims are not partners.
+    const claims = [
+      inConflict("document-a", "spoken-a", documentSource),
+      inConflict("document-b", "spoken-b", documentSource),
+      inConflict("spoken-a", "document-a", spokenSource),
+      inConflict("spoken-b", "document-b", spokenSource),
+    ];
+    const agenda = buildInterviewAgenda({ ...session, claims });
+    const sides = agenda.askNext.find((question) => question.field === "authorization")?.conflict
+      ?.sides;
+    expect(sides?.map((side) => side.claimId)).toEqual(["document-a", "spoken-a"]);
+    expect(sides?.map((side) => side.sourceLabel)).toEqual([
+      "an uploaded document",
+      "what the user said",
+    ]);
+  });
+
+  it("names an assistant suggestion as the assistant's, not as the user's", () => {
+    const { session, messageId } = setup();
+    const suggestion = buildClaim({
+      claimId: "suggestion",
+      field: "authorization",
+      status: "conflict",
+      conflictsWithClaimId: "document",
+      source: { type: "agent_suggestion", reference: { kind: "message", messageId } },
+    });
+    const document = buildClaim({
+      claimId: "document",
+      field: "authorization",
+      status: "conflict",
+      conflictsWithClaimId: "suggestion",
+      source: {
+        type: "policy_document",
+        reference: {
+          kind: "document",
+          citation: { documentName: "policy.md", location: "§ Rules", quote: "A verbatim quote." },
+        },
+      },
+    });
+    const agenda = buildInterviewAgenda({ ...session, claims: [suggestion, document] });
+    const sides = agenda.askNext.find((question) => question.field === "authorization")?.conflict
+      ?.sides;
+    expect(sides?.map((side) => side.sourceLabel)).toEqual([
+      "the assistant's suggestion",
+      "an uploaded document",
+    ]);
   });
 
   it("does not ask about a field that only awaits the review of an extracted claim", () => {
-    const { session, messageId } = setup();
+    const { session } = setup();
     const extracted = buildClaim({
       claimId: "c1",
       field: "purpose",
       status: "extracted",
-      source: { type: "employee_statement", reference: { kind: "message", messageId } },
     });
     const agenda = buildInterviewAgenda({ ...session, claims: [extracted] });
     expect(agenda.doNotAsk).toEqual([{ field: "purpose", why: "awaiting_review" }]);

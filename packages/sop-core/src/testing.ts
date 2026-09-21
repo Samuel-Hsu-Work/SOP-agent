@@ -39,15 +39,31 @@ export function createSessionWithUserMessage(
 export function buildClaim(overrides: Partial<Claim> & Pick<Claim, "claimId" | "field">): Claim {
   const status = overrides.status ?? "observed";
   const isUnknown = status === "unknown";
+  const isExtracted = status === "extracted";
   const valueKind = overrides.field === "procedure" ? "step" : "statement";
   return {
     value: isUnknown ? null : { kind: valueKind, text: "A statement." },
     status,
-    source: { type: "employee_statement", reference: { kind: "message", messageId: "message-1" } },
-    authority: isUnknown ? "unknown" : "observed_practice",
+    // An extracted claim comes from a document. Everything else here cites the first test message.
+    source: isExtracted
+      ? {
+          type: "policy_document",
+          reference: {
+            kind: "document",
+            citation: {
+              documentName: "policy.md",
+              location: "§ Rules",
+              quote: "A verbatim quote from the policy.",
+            },
+          },
+        }
+      : { type: "employee_statement", reference: { kind: "message", messageId: "message-1" } },
+    authority: isUnknown ? "unknown" : isExtracted ? "official_policy" : "observed_practice",
     effectiveDate: null,
     note: null,
-    createdByType: "agent",
+    createdByType: isExtracted ? "extraction" : "agent",
+    // A conflict names its partner. Tests that need a real pair build it through `applyClaim`.
+    conflictsWithClaimId: status === "conflict" ? "unpaired-partner" : null,
     createdAt: "2026-01-01T00:00:00.000Z",
     updatedAt: "2026-01-01T00:00:00.000Z",
     ...overrides,

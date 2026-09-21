@@ -22,7 +22,7 @@ export interface ReviewClaimCommand {
 }
 
 /** The note a rejected extracted claim keeps, since it becomes an unknown with no value. */
-export const REJECTED_NOTE = "Rejected in review. The earlier statement is in the history.";
+export const REJECTED_NOTE = "A rule read from a document was rejected in review.";
 
 const CONFIRMABLE: readonly ClaimStatus[] = ["observed", "proposed", "extracted"];
 const REJECTABLE: readonly ClaimStatus[] = ["proposed", "confirmed", "extracted"];
@@ -69,7 +69,7 @@ function reviewHistory(
  * previous claim in the history, so that is where to read it: a claim confirmed from an extracted
  * one must go back to extracted, with its extraction authority, and its source alone cannot say so.
  * A confirmed claim with no such entry (a session built by hand) falls back to what its source
- * implies, which is right for the two claims a person can make or an agent can suggest.
+ * implies, which is right for the three claims a person can make, an agent can suggest, or a document can hold.
  */
 function statusBeforeConfirming(
   session: SopSession,
@@ -84,9 +84,14 @@ function statusBeforeConfirming(
       authority: confirmation.previousClaim.authority,
     };
   }
-  return confirmed.source.type === "agent_suggestion"
-    ? { status: "proposed", authority: "proposed" }
-    : { status: "observed", authority: "observed_practice" };
+  switch (confirmed.source.type) {
+    case "agent_suggestion":
+      return { status: "proposed", authority: "proposed" };
+    case "policy_document":
+      return { status: "extracted", authority: "official_policy" };
+    case "employee_statement":
+      return { status: "observed", authority: "observed_practice" };
+  }
 }
 
 function replaceClaim(session: SopSession, claim: Claim): Claim[] {
@@ -194,7 +199,29 @@ function rejectClaim(
       );
     }
     case "extracted": {
-      // A step keeps its slot in the procedure order, as when a step is marked unknown.
+      // A field that holds something else keeps it, and the rejected rule just goes to the history.
+      // Leaving an unknown behind would keep the whole field unresolved and unaskable for a rule the
+      // person has already turned down.
+      const isOnlyClaimOfItsField = !session.claims.some(
+        (existing) => existing.field === previous.field && existing.claimId !== previous.claimId,
+      );
+      if (!isOnlyClaimOfItsField) {
+        return finish(
+          session,
+          {
+            claims: session.claims.filter((existing) => existing.claimId !== previous.claimId),
+            procedureOrder: session.procedureOrder.filter(
+              (claimId) => claimId !== previous.claimId,
+            ),
+            claimHistory,
+          },
+          previous,
+          "withdrawn",
+          timestamp,
+        );
+      }
+      // The only claim: the field goes back to unknown, so it is not asked about again. A step
+      // keeps its slot in the procedure order, as when a step is marked unknown.
       const claim: Claim = {
         ...previous,
         value: null,

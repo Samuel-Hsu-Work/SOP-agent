@@ -2,6 +2,7 @@ import type { Claim, ClaimStatus } from "./claim.ts";
 import { computeGaps } from "./computeGaps.ts";
 import type { SopSession } from "./session.ts";
 import { getFieldDefinition, type SopFieldName } from "./sopFields.ts";
+import { quantitiesIn } from "./text.ts";
 
 /** How many questions the agenda proposes at once. The agent asks one or two, not a form. */
 export const MAX_AGENDA_QUESTIONS = 3;
@@ -15,12 +16,30 @@ const SAME_QUESTION_OVERLAP = 0.6;
 /** The longest recent question kept, so a rambling reply cannot inflate the state item. */
 const MAX_RECENT_QUESTION_LENGTH = 300;
 
+/** How each kind of source is named to the agent. Shared with the state item's claim list. */
+export const CLAIM_SOURCE_LABELS: Readonly<Record<Claim["source"]["type"], string>> = {
+  employee_statement: "what the user said",
+  agent_suggestion: "the assistant's suggestion",
+  policy_document: "an uploaded document",
+};
+
+/** One side of a conflict, as the agent needs to put it to the user. It carries no file name and no quote. */
+export interface ConflictSide {
+  claimId: string;
+  statement: string;
+  /** Who said it: what the user said, the assistant's suggestion, or an uploaded document. */
+  sourceLabel: string;
+  effectiveDate: string | null;
+}
+
 export interface AgendaQuestion {
   field: SopFieldName;
   label: string;
   /** A ready-made way to ask, so the same field is asked the same good way every time. */
   probe: string;
-  reason: "empty" | "unresolved";
+  reason: "empty" | "unresolved" | "conflict";
+  /** Both sides of the conflict in this field when `reason` is `conflict`, otherwise null. */
+  conflict: { sides: ConflictSide[] } | null;
   /**
    * How many earlier questions were about the same thing as this probe, whatever their exact
    * words. Above zero means the user has already been asked and moved on without answering, so the
@@ -53,15 +72,48 @@ export interface InterviewAgenda {
 export function buildInterviewAgenda(session: SopSession): InterviewAgenda {
   const report = computeGaps(session);
   const earlierQuestions = recentQuestions(session, MAX_TRACKED_QUESTIONS);
-  const askNext = report.gaps
+  // A field can hold several conflict pairs. One is put to the user at a time: a claim and the
+  // partner it points at, never two claims that merely share a status.
+  const conflictSidesOf = (field: SopFieldName): ConflictSide[] => {
+    const first = session.claims.find(
+      (claim) => claim.field === field && claim.status === "conflict",
+    );
+    const partner = session.claims.find((claim) => claim.claimId === first?.conflictsWithClaimId);
+    if (first === undefined || partner === undefined) return [];
+    return [first, partner].map(
+      (claim): ConflictSide => ({
+        claimId: claim.claimId,
+        statement: claim.value?.text ?? "",
+        sourceLabel: CLAIM_SOURCE_LABELS[claim.source.type],
+        effectiveDate: claim.effectiveDate,
+      }),
+    );
+  };
+
+  // A conflict is one answer from being resolved, so within its class it comes before an empty field.
+  const severityRank = (severity: "blocking" | "advisory" | undefined) =>
+    severity === "blocking" ? 0 : 1;
+  const askable = report.gaps
     .filter((readiness) => readiness.askable)
+    .map((readiness) => ({ readiness, sides: conflictSidesOf(readiness.field) }));
+  const askNext = askable
+    .map((entry, index) => ({ ...entry, index }))
+    .sort(
+      (first, second) =>
+        severityRank(first.readiness.gap?.severity) -
+          severityRank(second.readiness.gap?.severity) ||
+        Number(second.sides.length > 0) - Number(first.sides.length > 0) ||
+        first.index - second.index,
+    )
     .slice(0, MAX_AGENDA_QUESTIONS)
     .map(
-      (readiness): AgendaQuestion => ({
+      ({ readiness, sides }): AgendaQuestion => ({
         field: readiness.field,
         label: readiness.label,
         probe: getFieldDefinition(readiness.field).probe,
-        reason: readiness.state === "empty" ? "empty" : "unresolved",
+        reason:
+          sides.length > 0 ? "conflict" : readiness.state === "empty" ? "empty" : "unresolved",
+        conflict: sides.length > 0 ? { sides } : null,
         timesAskedBefore: countQuestionsAbout(
           getFieldDefinition(readiness.field).probe,
           earlierQuestions,
@@ -107,44 +159,6 @@ function countQuestionsAbout(probe: string, questions: readonly string[]): numbe
     const total = new Set([...probeWords, ...questionWords]).size;
     return total > 0 && shared / total >= SAME_QUESTION_OVERLAP;
   }).length;
-}
-
-const SPELLED_NUMBERS = [
-  "two",
-  "three",
-  "four",
-  "five",
-  "six",
-  "seven",
-  "eight",
-  "nine",
-  "ten",
-  "eleven",
-  "twelve",
-  "fifteen",
-  "twenty",
-  "thirty",
-  "forty",
-  "fifty",
-  "sixty",
-  "seventy",
-  "eighty",
-  "ninety",
-  "hundred",
-  "thousand",
-  "million",
-  "dozen",
-];
-const QUANTITY_PATTERN = new RegExp(
-  `\\d[\\d,]*(?:\\.\\d+)?|\\b(?:${SPELLED_NUMBERS.join("|")})\\b`,
-  "gi",
-);
-
-/** The numbers in a text, written the same way whether the text says "$1,000" or "1000". */
-function quantitiesIn(text: string): Set<string> {
-  return new Set(
-    [...text.matchAll(QUANTITY_PATTERN)].map((match) => match[0].toLowerCase().replace(/,/g, "")),
-  );
 }
 
 /**

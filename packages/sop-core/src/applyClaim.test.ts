@@ -452,7 +452,7 @@ describe("applyClaim: correcting", () => {
       changeNote: null,
       previousClaim: recorded.claim,
     });
-    expect(messageId).toBe(recorded.claim.source.reference.messageId);
+    expect(messageId).toBe((recorded.claim.source.reference as { messageId: string }).messageId);
     expect(sopSessionSchema.safeParse(result.session).success).toBe(true);
   });
 
@@ -538,7 +538,7 @@ describe("applyClaim: correcting", () => {
       claimId: "x",
       changedAt: "2026-01-01T00:00:00.000Z",
       changedBy: "agent" as const,
-      sourceMessageId: recorded.claim.source.reference.messageId,
+      sourceMessageId: (recorded.claim.source.reference as { messageId: string }).messageId,
       reason: "corrected" as const,
       changeNote: null,
       previousClaim: recorded.claim,

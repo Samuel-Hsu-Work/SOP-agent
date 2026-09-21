@@ -15,6 +15,20 @@ export const MAX_TOOL_CALLS_PER_MESSAGE = 16;
 /**
  * The most text all active claims and notes may hold together. The per-item limits alone allow a
  * session far larger than any prompt should be, so this bounds it. A session over the cap is
- * refused, never truncated, because every claim has to stay addressable for corrections.
+ * refused, never truncated, because every claim has to stay addressable for corrections. A document
+ * claim's citation counts too.
  */
-export const MAX_TOTAL_CLAIM_TEXT = 40_000;
+export const MAX_TOTAL_CLAIM_TEXT = 60_000;
+
+/** The citation a document claim carries. The quote is verified against the document by the API. */
+export const MIN_QUOTE_LENGTH = 15;
+export const MAX_QUOTE_LENGTH = 300;
+export const MAX_DOCUMENT_NAME_LENGTH = 200;
+export const MAX_DOCUMENT_LOCATION_LENGTH = 120;
+
+/**
+ * The most a serialized session may weigh in the browser. Every chat and PDF request carries the
+ * whole session and the API's body limit is 1 MiB, so a session past this would fit in storage but
+ * could no longer be sent. Uploading a document is refused if it would cross it.
+ */
+export const MAX_SESSION_TRANSPORT_BYTES = 786_432;

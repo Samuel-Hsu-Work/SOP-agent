@@ -4,28 +4,35 @@ import {
   type AuthorityTier,
   type Claim,
   type ClaimStatus,
-  type ClaimValue,
-  calendarDateSchema,
   type SourceType,
 } from "./claim.ts";
 import {
   type ApplyClaimResult,
   agentHistoryEntry,
+  buildValue,
   type ClaimWriteError,
   checkSessionLimits,
   commit,
   failure,
+  hasUserMessage,
+  isClaimWriteError,
   type SessionChanges,
   STATUSES_WRITABLE_BY,
+  validateText,
 } from "./claimWriteSupport.ts";
-import { MAX_NOTE_LENGTH, MAX_STATEMENT_LENGTH } from "./limits.ts";
+import type { ResolveConflictCommand } from "./conflictResolution.ts";
+import { applyResolveConflict } from "./conflictResolution.ts";
+import { pairConflictsAfterWrite } from "./detectConflicts.ts";
+import type { IngestExtractedClaimCommand } from "./documentClaims.ts";
+import { applyIngestExtracted } from "./documentClaims.ts";
 import type { ReviewClaimCommand } from "./reviewClaim.ts";
 import { applyReviewCommand } from "./reviewClaim.ts";
 import type { SopSession } from "./session.ts";
 import type { SopFieldName } from "./sopFields.ts";
+import { normalizeStatement } from "./text.ts";
 import type { WriteContext } from "./writeContext.ts";
 
-/** Statuses a correction, a mark-unknown or a withdrawal may act on. `conflict` and `extracted` wait for their slices. */
+/** Statuses a correction, a mark-unknown or a withdrawal may act on. An `extracted` claim waits for a person's review, and a `conflict` for the user's final answer. */
 const STATUSES_AGENT_MAY_CHANGE: readonly ClaimStatus[] = [
   "observed",
   "proposed",
@@ -84,16 +91,28 @@ export interface WithdrawClaimCommand {
   sourceMessageId: string;
 }
 
-/** The four commands the agent's tools can build. The model cannot construct a review command. */
+/**
+ * The commands the agent's tools can build. The model cannot construct a review command, and it
+ * cannot construct an ingestion command either: both are outside this type.
+ */
 export type AgentClaimCommand =
   | RecordClaimCommand
   | CorrectClaimCommand
   | MarkUnknownCommand
-  | WithdrawClaimCommand;
+  | WithdrawClaimCommand
+  | ResolveConflictCommand;
 
-export type ClaimWriteCommand = AgentClaimCommand | ReviewClaimCommand;
+export type ClaimWriteCommand =
+  | AgentClaimCommand
+  | ReviewClaimCommand
+  | IngestExtractedClaimCommand;
 
-export type { ApplyClaimResult, ClaimWriteError };
+export type {
+  ApplyClaimResult,
+  ClaimWriteError,
+  IngestExtractedClaimCommand,
+  ResolveConflictCommand,
+};
 export { STATUSES_WRITABLE_BY };
 
 /**
@@ -116,11 +135,6 @@ function deriveAgentProvenance(status: AgentWritableStatus): {
 
 function isAgentWritableStatus(status: ClaimStatus): status is AgentWritableStatus {
   return (AGENT_WRITABLE_STATUSES as readonly ClaimStatus[]).includes(status);
-}
-
-/** Case and whitespace do not make a claim new: "Send it" and " send  it " are the same statement. */
-function normalizeStatement(text: string): string {
-  return text.trim().replace(/\s+/g, " ").toLowerCase();
 }
 
 /**
@@ -154,64 +168,9 @@ function findRecordedDuplicate(
   return isSameWords(candidate) ? candidate : undefined;
 }
 
-function buildValue(field: SopFieldName, text: string): ClaimValue {
-  return { kind: field === "procedure" ? "step" : "statement", text };
-}
-
-interface ValidatedText {
-  statement: string | null;
-  note: string | null;
-  effectiveDate: string | null;
-}
-
-/** Trims and checks the free text and the date every command may carry. */
-function validateText(input: {
-  statement: string | null;
-  isStatementRequired: boolean;
-  isNoteRequired: boolean;
-  note: string | null;
-  effectiveDate: string | null;
-}): ValidatedText | ClaimWriteError {
-  const statement = input.statement === null ? null : input.statement.trim();
-  if (input.isStatementRequired && (statement === null || statement === "")) {
-    return { code: "value_required", message: "The statement must not be empty." };
-  }
-  if (statement !== null && statement.length > MAX_STATEMENT_LENGTH) {
-    return { code: "invalid_value", message: "The statement is too long." };
-  }
-
-  const note = input.note === null ? null : input.note.trim() || null;
-  if (input.isNoteRequired && note === null) {
-    return { code: "note_required", message: "A note is required. Say what is unknown or why." };
-  }
-  if (note !== null && note.length > MAX_NOTE_LENGTH) {
-    return { code: "invalid_value", message: "The note is too long." };
-  }
-
-  if (input.effectiveDate !== null && !calendarDateSchema.safeParse(input.effectiveDate).success) {
-    return {
-      code: "invalid_value",
-      message: "The effective date must be a calendar date, YYYY-MM-DD.",
-    };
-  }
-  return {
-    statement: statement === "" ? null : statement,
-    note,
-    effectiveDate: input.effectiveDate,
-  };
-}
-
-function isClaimWriteError(result: ValidatedText | ClaimWriteError): result is ClaimWriteError {
-  return "code" in result;
-}
-
 /** An unknown with no slot in the procedure: it stands for the whole field, not one step. */
 function isFieldLevelUnknown(session: SopSession, claim: Claim): boolean {
   return claim.status === "unknown" && !session.procedureOrder.includes(claim.claimId);
-}
-
-function hasUserMessage(session: SopSession, messageId: string): boolean {
-  return session.messages.some((message) => message.role === "user" && message.id === messageId);
 }
 
 function applyRecord(
@@ -291,6 +250,7 @@ function applyRecord(
     effectiveDate: text.effectiveDate,
     note: text.note,
     createdByType: command.createdByType,
+    conflictsWithClaimId: null,
     createdAt: timestamp,
     updatedAt: timestamp,
   };
@@ -495,6 +455,7 @@ function applyMarkUnknown(
       effectiveDate: null,
       note: text.note,
       createdByType: command.createdByType,
+      conflictsWithClaimId: null,
       createdAt: timestamp,
       updatedAt: timestamp,
     };
@@ -635,9 +596,13 @@ export function applyClaim(
 
   switch (command.kind) {
     case "record":
-      return applyRecord(session, command, context);
+      return pairConflictsAfterWrite(applyRecord(session, command, context), context);
     case "correct":
-      return applyCorrect(session, command, context);
+      return pairConflictsAfterWrite(applyCorrect(session, command, context), context);
+    case "ingestExtracted":
+      return pairConflictsAfterWrite(applyIngestExtracted(session, command, context), context);
+    case "resolveConflict":
+      return pairConflictsAfterWrite(applyResolveConflict(session, command, context), context);
     case "markUnknown":
       return applyMarkUnknown(session, command, context);
     case "withdraw":

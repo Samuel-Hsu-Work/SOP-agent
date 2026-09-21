@@ -4,8 +4,10 @@ export type {
   ClaimWriteCommand,
   ClaimWriteError,
   CorrectClaimCommand,
+  IngestExtractedClaimCommand,
   MarkUnknownCommand,
   RecordClaimCommand,
+  ResolveConflictCommand,
   WithdrawClaimCommand,
 } from "./applyClaim.ts";
 export { applyClaim, STATUSES_WRITABLE_BY } from "./applyClaim.ts";
@@ -43,10 +45,12 @@ export type {
   AgentWritableStatus,
   AuthorityTier,
   Claim,
+  ClaimSource,
   ClaimStatus,
   ClaimValue,
   ClaimWriteErrorCode,
   CreatorType,
+  DocumentCitation,
   SourceType,
 } from "./claim.ts";
 export {
@@ -55,8 +59,10 @@ export {
   CLAIM_STATUSES,
   CLAIM_WRITE_ERROR_CODES,
   CREATOR_TYPES,
+  calendarDateSchema,
   claimSchema,
   claimValueSchema,
+  documentCitationSchema,
   SOURCE_TYPES,
   totalClaimTextLength,
   UNRESOLVED_STATUSES,
@@ -68,6 +74,22 @@ export type {
   GapReport,
 } from "./computeGaps.ts";
 export { computeGaps } from "./computeGaps.ts";
+export { CONFLICT_TOPIC_OVERLAP, findConflictPartner } from "./detectConflicts.ts";
+export type {
+  ClaimDraft,
+  DocumentExtractResponse,
+  DocumentFileKind,
+  QuoteRejectionReason,
+} from "./documentWire.ts";
+export {
+  claimDraftSchema,
+  DOCUMENT_EXTENSIONS,
+  DOCUMENT_FILE_KINDS,
+  documentExtractResponseSchema,
+  MAX_EXTRACTED_CLAIMS_PER_DOCUMENT,
+  MAX_UPLOAD_BYTES,
+  QUOTE_REJECTION_REASONS,
+} from "./documentWire.ts";
 export type { MarkDownloadedResult } from "./download.ts";
 export { markSopDownloaded } from "./download.ts";
 export type { HttpError, HttpErrorCode } from "./httpWire.ts";
@@ -75,11 +97,13 @@ export { HTTP_ERROR_CODES, httpErrorSchema } from "./httpWire.ts";
 export type {
   AgendaExclusion,
   AgendaQuestion,
+  ConflictSide,
   InterviewAgenda,
   ProcedureStepView,
 } from "./interviewAgenda.ts";
 export {
   buildInterviewAgenda,
+  CLAIM_SOURCE_LABELS,
   MAX_AGENDA_QUESTIONS,
   orderProcedureSteps,
   recentQuestions,
@@ -113,6 +137,7 @@ export {
   HISTORY_REASONS,
   MARK_CLAIM_UNKNOWN_TOOL_NAME,
   RECORD_CLAIM_TOOL_NAME,
+  RESOLVE_CONFLICT_TOOL_NAME,
   REVIEW_HISTORY_REASONS,
   SESSION_SCHEMA_VERSION,
   SESSION_STATUSES,

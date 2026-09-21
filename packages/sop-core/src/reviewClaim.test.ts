@@ -76,7 +76,7 @@ function setup() {
       insertBeforeClaimId: null,
     });
 
-  return { context, session, messageId, confirm, reject, withClaim, apply, record };
+  return { context, session, messageId, source, confirm, reject, withClaim, apply, record };
 }
 
 function expectFailure(result: ReturnType<typeof applyClaim>, code: string) {
@@ -232,13 +232,11 @@ describe("review: rejecting", () => {
   });
 
   it("returns a rejected extracted claim to unknown, keeps a procedure step's slot, and drops the value", () => {
-    const { context, session, messageId, reject } = setup();
+    const { context, session, reject } = setup();
     const step = buildClaim({
       claimId: "step-1",
       field: "procedure",
       status: "extracted",
-      authority: "official_policy",
-      source: { type: "employee_statement", reference: { kind: "message", messageId } },
       effectiveDate: "2025-03-01",
     });
     const withStep: SopSession = { ...session, claims: [step], procedureOrder: ["step-1"] };
@@ -253,6 +251,71 @@ describe("review: rejecting", () => {
     });
     expect(result.ok && result.session.procedureOrder).toEqual(["step-1"]);
     if (result.ok) expect(sopSessionSchema.safeParse(result.session).success).toBe(true);
+  });
+
+  it("removes a rejected extracted rule to the history when its field holds something else", () => {
+    const { context, session, reject, source } = setup();
+    const kept = buildClaim({
+      claimId: "kept",
+      field: "authorization",
+      status: "confirmed",
+      source: source("employee_statement"),
+      value: { kind: "statement", text: "The Finance Director approves up to $25,000." },
+    });
+    const rejected = buildClaim({
+      claimId: "rejected",
+      field: "authorization",
+      status: "extracted",
+      value: { kind: "statement", text: "This memo replaces the old threshold." },
+    });
+    const result = applyClaim(
+      { ...session, claims: [kept, rejected] },
+      reject("rejected"),
+      context,
+    );
+
+    expect(result.ok && result.change).toBe("withdrawn");
+    expect(result.ok && result.session.claims.map((claim) => claim.claimId)).toEqual(["kept"]);
+    // No unknown is left behind, and the removal is not silent.
+    expect(result.ok && result.session.claims.some((claim) => claim.status === "unknown")).toBe(
+      false,
+    );
+    expect(result.ok && result.session.claimHistory).toMatchObject([
+      { claimId: "rejected", reason: "rejected", changedBy: "user", sourceMessageId: null },
+    ]);
+    if (result.ok) expect(sopSessionSchema.safeParse(result.session).success).toBe(true);
+  });
+
+  it("removes a rejected extracted step from the procedure order when other steps exist", () => {
+    const { context, session, reject, source } = setup();
+    const first = buildClaim({
+      claimId: "step-1",
+      field: "procedure",
+      status: "confirmed",
+      source: source("employee_statement"),
+      value: { kind: "step", text: "Receive the request." },
+    });
+    const second = buildClaim({
+      claimId: "step-2",
+      field: "procedure",
+      status: "extracted",
+      value: { kind: "step", text: "A step nobody follows." },
+    });
+    const result = applyClaim(
+      { ...session, claims: [first, second], procedureOrder: ["step-1", "step-2"] },
+      reject("step-2"),
+      context,
+    );
+    expect(result.ok && result.session.procedureOrder).toEqual(["step-1"]);
+    if (result.ok) expect(sopSessionSchema.safeParse(result.session).success).toBe(true);
+  });
+
+  it("still returns the field to unknown when the rejected rule was its only claim", () => {
+    const { context, withClaim, reject } = setup();
+    const { session } = withClaim("extracted", { field: "evidence" });
+    const result = applyClaim(session, reject("claim-1"), context);
+    expect(result.ok && result.claim).toMatchObject({ status: "unknown", note: REJECTED_NOTE });
+    expect(result.ok && result.session.claims).toHaveLength(1);
   });
 
   it("does not offer a reject for the user's own statement", () => {

@@ -7,6 +7,11 @@ export const HTTP_ERROR_CODES = [
   "sop_not_approved",
   "payload_too_large",
   "unsupported_media_type",
+  "unsupported_document_type",
+  "document_has_no_text",
+  "document_unreadable",
+  "model_unavailable",
+  "extraction_busy",
   "internal_error",
 ] as const;
 
