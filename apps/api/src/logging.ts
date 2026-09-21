@@ -48,6 +48,11 @@ export interface ChatTurnLog {
   historyEntriesWritten: number;
   withdrawLimitHits: number;
   conflictResolutionLimitHits: number;
+  /** The consistency review: whether it ran, and only counts and a fixed category, never a question. */
+  consistencyReview: "not_needed" | "ran" | "failed";
+  consistencyFindingsRaised: number;
+  consistencyFindingsWaiting: number;
+  consistencyQuestionCategory: string | null;
   stateItemChars: number;
   /** The first field the interview agenda proposed at the start of the turn: one of 13 names. */
   agendaTopField: string | null;

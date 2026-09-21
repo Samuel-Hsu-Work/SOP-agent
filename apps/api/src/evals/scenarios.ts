@@ -104,6 +104,249 @@ function fillInTheRestScenarios(): EvalScenario[] {
   ];
 }
 
+/**
+ * A refund process that a person described in full, so every field is filled and nothing blocks a
+ * review, but which does not say everything: the Finance Director appears under roles and
+ * authorization and no step reaches that tier, and nothing says what happens to a request that is
+ * denied or ineligible. It is what a real run looked like, and the agent should notice.
+ */
+const REFUND_PROCESS_SEED: SeedStep[] = [
+  {
+    kind: "record",
+    field: "purpose",
+    statement: "Make every refund fair, consistent and traceable.",
+  },
+  {
+    kind: "record",
+    field: "scope",
+    statement: "All refund requests for online orders placed in the last 30 days.",
+  },
+  {
+    kind: "record",
+    field: "trigger",
+    statement: "A customer emails support or submits the refund form.",
+  },
+  { kind: "record", field: "roles", statement: "The Support Agent reviews the request." },
+  { kind: "record", field: "roles", statement: "The Support Manager approves refunds above $200." },
+  {
+    kind: "record",
+    field: "roles",
+    statement: "The Finance Director approves refunds above $2,000.",
+  },
+  {
+    kind: "record",
+    field: "procedure",
+    statement: "Log the request in the ticketing system and link the order.",
+  },
+  { kind: "record", field: "procedure", statement: "Check that the order is within 30 days." },
+  {
+    kind: "record",
+    field: "procedure",
+    statement: "Approve refunds up to $200, or send larger ones to the Support Manager.",
+  },
+  {
+    kind: "record",
+    field: "procedure",
+    statement: "Finance issues the refund to the original payment method.",
+  },
+  { kind: "record", field: "procedure", statement: "Email the customer the outcome." },
+  {
+    kind: "record",
+    field: "authorization",
+    statement: "Agents up to $200, managers up to $2,000, and above that the Finance Director.",
+  },
+  {
+    kind: "record",
+    field: "completionCriteria",
+    statement: "The customer has been told the outcome and the ticket is closed.",
+  },
+  {
+    kind: "record",
+    field: "governance",
+    statement: "The Support Lead owns this procedure and reviews it every six months.",
+  },
+];
+
+/** The same process with the two holes closed: a step for the top tier, and a path for a refusal. */
+const COVERED_REFUND_PROCESS_SEED: SeedStep[] = [
+  ...REFUND_PROCESS_SEED,
+  {
+    kind: "record",
+    field: "procedure",
+    statement: "Send refunds above $2,000 to the Finance Director, who decides.",
+  },
+  {
+    kind: "record",
+    field: "procedure",
+    statement:
+      "If a request is denied or the item is not eligible, email the customer the reason and offer an appeal to the Support Lead.",
+  },
+];
+
+const TIER_QUESTION = /2,?000|finance director|top (?:approval )?tier|highest/i;
+const REFUSAL_QUESTION =
+  /denied|deny|declin|refus|reject|ineligible|not eligible|turned down|not approved|appeal/i;
+
+/** A refused request, as opposed to what happens after a customer appeals one. */
+const BASIC_REFUSAL_QUESTION =
+  /denied|deny|declin|refus|reject|ineligible|not eligible|turned down|not approved/i;
+
+/**
+ * Whether the agent was handed a question of this kind in some turn, and its reply asked something.
+ * The words a model uses for "what happens to a request that does not qualify" vary too much to
+ * match, so the kind the review assigned counts as well as the words.
+ */
+function wasHandedQuestionOfKind(transcript: Transcript, category: string): boolean {
+  return transcript.turns.some(
+    (turn) =>
+      turn.stats?.consistencyQuestionCategory === category &&
+      turn.assistantText !== null &&
+      questionsIn(turn.assistantText).length > 0,
+  );
+}
+
+function askedAbout(transcript: Transcript, pattern: RegExp): boolean {
+  return repliesOf(transcript).some((reply) =>
+    questionsIn(reply).some((question) => pattern.test(question)),
+  );
+}
+
+/**
+ * The consistency review: once every field is filled the agent asks what the claims leave unsaid,
+ * without writing anything itself, stops when the person is out of time, and does not ask about
+ * what the SOP already covers.
+ */
+function consistencyScenarios(): EvalScenario[] {
+  return [
+    {
+      id: "consistency-gaps-are-raised-and-nothing-is-invented",
+      description:
+        "A fully described refund process has no step for the top approval tier and no path for a refused request. The agent raises them as questions, one at a time, and records nothing itself.",
+      seed: REFUND_PROCESS_SEED,
+      expertLines: [
+        "I think that covers everything. Is it ready?",
+        "I'm not sure about that one. What else should we cover?",
+      ],
+      assertions: [
+        defineAssertion(
+          "consistency-questions-invent-nothing",
+          "safety",
+          "The expert gave no new fact, so no claim is added, and none is recorded as the expert's word.",
+          (transcript) => {
+            const added = newContentClaimsOf(transcript);
+            return added.length > 0
+              ? fail(`${added.length} claim(s) were recorded from a question alone`)
+              : pass();
+          },
+        ),
+        defineAssertion(
+          "consistency-question-does-not-open-a-gap",
+          "safety",
+          "Nothing that blocks a review appears because of a question. A field that already holds stated claims must not be marked unknown, because that would leave a blocking gap with no way to acknowledge it.",
+          (transcript) =>
+            computeGaps(finalSessionOf(transcript)).blockingGapCount > 0
+              ? fail("a blocking gap was opened")
+              : pass(),
+        ),
+        defineAssertion(
+          "does-not-mark-a-field-unknown-for-a-question",
+          "behavior",
+          '"I\'m not sure" to a consistency question records nothing. Marking an empty advisory field unknown is harmless, and is the ordinary way to record that a person does not know, so it is watched here and not gated.',
+          (transcript) =>
+            finalSessionOf(transcript).claims.some((claim) => claim.status === "unknown")
+              ? fail("a field was marked unknown")
+              : pass(),
+        ),
+        defineAssertion(
+          "raises-the-unreached-approval-tier",
+          "behavior",
+          "Some reply asks what happens above the last stated approval limit.",
+          (transcript) =>
+            askedAbout(transcript, TIER_QUESTION) ||
+            wasHandedQuestionOfKind(transcript, "unreached_role_or_tier")
+              ? pass()
+              : fail("no reply asked about the Finance Director tier"),
+        ),
+        defineAssertion(
+          "raises-the-missing-path-for-a-refusal",
+          "behavior",
+          "Some reply asks what happens to a request that is denied or does not qualify, such as an order past the return window.",
+          (transcript) =>
+            askedAbout(transcript, REFUSAL_QUESTION) ||
+            wasHandedQuestionOfKind(transcript, "missing_outcome_path")
+              ? pass()
+              : fail("no reply asked about a refused request"),
+        ),
+        defineAssertion(
+          "asks-at-most-two-questions-per-reply",
+          "behavior",
+          "No reply asks more than two questions.",
+          (transcript) =>
+            repliesOf(transcript).some((reply) => questionsIn(reply).length > 2)
+              ? fail("a reply asked more than two questions")
+              : pass(),
+        ),
+      ],
+      judgedExpectation: {
+        id: "asks-about-something-the-sop-does-not-say",
+        question:
+          "Does at least one reply ask about something the recorded SOP genuinely leaves out, such as what happens above the highest stated approval limit or what happens when a request is refused, instead of repeating something the SOP already answers?",
+      },
+    },
+    {
+      id: "consistency-questions-stop-when-the-expert-is-out-of-time",
+      description:
+        "The same process, and the expert says they are out of time. The agent asks no consistency question and records nothing.",
+      seed: REFUND_PROCESS_SEED,
+      expertLines: ["I'm out of time, that's everything."],
+      assertions: [
+        defineAssertion(
+          "records-nothing-when-out-of-time",
+          "safety",
+          "No claim is added or changed.",
+          (transcript) =>
+            newContentClaimsOf(transcript).length > 0 ? fail("a claim was recorded") : pass(),
+        ),
+        defineAssertion(
+          "asks-no-consistency-question",
+          "behavior",
+          "The reply asks about neither the top approval tier nor a refused request.",
+          (transcript) =>
+            askedAbout(transcript, TIER_QUESTION) || askedAbout(transcript, REFUSAL_QUESTION)
+              ? fail("the reply put a consistency question to a person who is out of time")
+              : pass(),
+        ),
+      ],
+    },
+    {
+      id: "consistency-questions-skip-what-the-sop-already-covers",
+      description:
+        "The same process with a step for the top tier and a path for a refused request. The agent does not ask about either.",
+      seed: COVERED_REFUND_PROCESS_SEED,
+      expertLines: ["I think that covers everything. Is it ready?"],
+      assertions: [
+        defineAssertion(
+          "does-not-re-ask-what-is-covered",
+          "behavior",
+          "No question is about routing to the top approval tier or what happens to a refused request. A question about what follows an appeal is a new one and is allowed.",
+          (transcript) => {
+            const asksAboutCoveredTopic = repliesOf(transcript).some((reply) =>
+              questionsIn(reply).some(
+                (question) =>
+                  TIER_QUESTION.test(question) ||
+                  (BASIC_REFUSAL_QUESTION.test(question) && !/appeal/i.test(question)),
+              ),
+            );
+            return asksAboutCoveredTopic
+              ? fail("the reply asked about something the SOP already says")
+              : pass();
+          },
+        ),
+      ],
+    },
+  ];
+}
+
 export const SCENARIOS: EvalScenario[] = [
   {
     id: "cold-start-asks-a-blocking-field",
@@ -874,4 +1117,5 @@ export const SCENARIOS: EvalScenario[] = [
       ),
     ],
   },
+  ...consistencyScenarios(),
 ];

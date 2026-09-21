@@ -1,10 +1,10 @@
 import type {
-  ExtractionStepRequest,
-  ExtractionStepResult,
   ModelClient,
   ModelStepRequest,
   ModelStepResult,
   ModelToolCall,
+  StructuredOutputRequest,
+  StructuredOutputResult,
 } from "../model/modelClient.ts";
 import { ModelOutputError } from "../model/modelFallback.ts";
 
@@ -15,14 +15,14 @@ export type ScriptedStep = (
 
 /** One scripted extraction call. It returns the model's output, or throws like a refusing model. */
 export type ScriptedExtractionStep = (
-  request: ExtractionStepRequest<unknown>,
+  request: StructuredOutputRequest<unknown>,
 ) => Promise<unknown> | unknown;
 
 export interface ScriptedModelClient extends ModelClient {
   /** Every request the code under test sent, in order. */
   readonly requests: ModelStepRequest[];
   /** Every extraction request the code under test sent, in order. */
-  readonly extractionRequests: ExtractionStepRequest<unknown>[];
+  readonly extractionRequests: StructuredOutputRequest<unknown>[];
 }
 
 /** Steps are consumed in order across every call, including retries on a fallback model. */
@@ -31,18 +31,20 @@ export function createScriptedModelClient(
   extractionSteps: ScriptedExtractionStep[] = [],
 ): ScriptedModelClient {
   const requests: ModelStepRequest[] = [];
-  const extractionRequests: ExtractionStepRequest<unknown>[] = [];
+  const extractionRequests: StructuredOutputRequest<unknown>[] = [];
   let nextStep = 0;
   let nextExtractionStep = 0;
   return {
     requests,
     extractionRequests,
-    async runExtraction<T>(request: ExtractionStepRequest<T>): Promise<ExtractionStepResult<T>> {
-      extractionRequests.push(request as ExtractionStepRequest<unknown>);
+    async runStructuredOutput<T>(
+      request: StructuredOutputRequest<T>,
+    ): Promise<StructuredOutputResult<T>> {
+      extractionRequests.push(request as StructuredOutputRequest<unknown>);
       const step = extractionSteps[nextExtractionStep];
       nextExtractionStep += 1;
       if (step === undefined) throw new Error("The scripted extraction ran out of steps.");
-      const output = await step(request as ExtractionStepRequest<unknown>);
+      const output = await step(request as StructuredOutputRequest<unknown>);
       // The real client reports an answer that does not match the schema as unusable output.
       const parsed = request.schema.safeParse(output);
       if (!parsed.success) throw new ModelOutputError("The model returned unusable output.");

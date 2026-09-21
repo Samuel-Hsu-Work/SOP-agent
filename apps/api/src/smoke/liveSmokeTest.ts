@@ -11,13 +11,21 @@
 import {
   applyClaim,
   computeGaps,
+  consistencyAnalysisOutputSchema,
   createEmptySession,
+  mergeConsistencyAnalysis,
   type SopFieldName,
   type SopSession,
   systemWriteContext,
   type UserMessage,
 } from "@sop-agent/sop-core";
 import OpenAI from "openai";
+import {
+  CONSISTENCY_REVIEW_INSTRUCTIONS,
+  CONSISTENCY_REVIEW_MAX_OUTPUT_TOKENS,
+  CONSISTENCY_REVIEW_TIMEOUT_MS,
+  renderConsistencyReviewInput,
+} from "../agent/consistencyReview.ts";
 import { runAgentTurn } from "../agent/runTurn.ts";
 import { extractClaimDrafts } from "../documents/extractClaimDrafts.ts";
 import { parseDocument } from "../documents/parseDocument.ts";
@@ -234,6 +242,93 @@ for (const model of models) {
     }
     console.log(
       `  proposed ${outcome.proposedCount}, verified ${outcome.drafts.length}, rejected ${outcome.rejected.count} | tokens ${outcome.inputTokens} in, ${outcome.outputTokens} out`,
+    );
+  } catch (error) {
+    failures += 1;
+    const detail =
+      error instanceof OpenAI.APIError
+        ? `${error.name} (${error.status}): ${error.message}`
+        : error instanceof Error
+          ? `${error.name}: ${error.message}`
+          : String(error);
+    console.log(`\nFAIL  ${label}\n  ${detail}`);
+  }
+}
+
+/**
+ * One consistency review per model, called directly (not through the fail-open wrapper) so that a
+ * schema the provider refuses, or output that does not hold up against the session, shows here
+ * instead of quietly turning the feature off.
+ */
+const REVIEW_SEED: [SopFieldName, string][] = [
+  ["purpose", "Make every refund fair, consistent and traceable."],
+  ["scope", "All refund requests for online orders placed in the last 30 days."],
+  ["trigger", "A customer emails support or submits the refund form."],
+  ["roles", "The Support Manager approves refunds above $200."],
+  ["roles", "The Finance Director approves refunds above $2,000."],
+  ["procedure", "Log the request in the ticketing system."],
+  ["procedure", "Approve refunds up to $200, or send larger ones to the Support Manager."],
+  ["procedure", "Finance issues the refund to the original payment method."],
+  [
+    "authorization",
+    "Agents up to $200, managers up to $2,000, and above that the Finance Director.",
+  ],
+  ["completionCriteria", "The customer has been told the outcome and the ticket is closed."],
+  ["governance", "The Support Lead owns this procedure and reviews it every six months."],
+];
+
+for (const model of models) {
+  const label = `${model} | reviews a finished SOP for what it leaves unsaid`;
+  try {
+    const context = systemWriteContext;
+    const messageId = context.newId();
+    let session: SopSession = {
+      ...createEmptySession(context),
+      messages: [
+        {
+          id: messageId,
+          role: "user",
+          createdAt: context.now(),
+          text: "Here is the whole process.",
+        },
+      ],
+    };
+    for (const [field, statement] of REVIEW_SEED) {
+      const written = applyClaim(
+        session,
+        {
+          kind: "record",
+          createdByType: "agent",
+          field,
+          status: "observed",
+          statement,
+          note: null,
+          effectiveDate: null,
+          sourceMessageId: messageId,
+          insertBeforeClaimId: null,
+        },
+        context,
+      );
+      if (!written.ok) throw new Error(`seed failed: ${written.error.code}`);
+      session = written.session;
+    }
+    const result = await client.runStructuredOutput({
+      model,
+      instructions: CONSISTENCY_REVIEW_INSTRUCTIONS,
+      input: renderConsistencyReviewInput(session),
+      schema: consistencyAnalysisOutputSchema,
+      schemaName: "consistency_review",
+      maxOutputTokens: CONSISTENCY_REVIEW_MAX_OUTPUT_TOKENS,
+      signal: AbortSignal.timeout(CONSISTENCY_REVIEW_TIMEOUT_MS),
+    });
+    const merged = mergeConsistencyAnalysis(session, result.output, context);
+    if (!merged.ok) throw new Error(`the review did not hold up: ${merged.reason}`);
+    console.log(`\nPASS  ${label}`);
+    for (const finding of merged.session.consistencyReview?.findings ?? []) {
+      console.log(`  ${finding.category} -> ${finding.targetField}: ${finding.question}`);
+    }
+    console.log(
+      `  ${merged.session.consistencyReview?.findings.length ?? 0} finding(s) | tokens ${result.inputTokens} in, ${result.outputTokens} out`,
     );
   } catch (error) {
     failures += 1;

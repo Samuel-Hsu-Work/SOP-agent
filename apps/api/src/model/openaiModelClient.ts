@@ -1,13 +1,13 @@
 import type OpenAI from "openai";
 import { zodResponsesFunction, zodTextFormat } from "openai/helpers/zod";
 import type {
-  ExtractionStepRequest,
-  ExtractionStepResult,
   ModelClient,
   ModelConversationItem,
   ModelStepRequest,
   ModelStepResult,
   ModelToolCall,
+  StructuredOutputRequest,
+  StructuredOutputResult,
 } from "./modelClient.ts";
 import { ModelOutputError, ModelRefusalError } from "./modelFallback.ts";
 
@@ -69,7 +69,7 @@ export function buildResponsesRequest(request: ModelStepRequest) {
  * and `instructions` holds only the fixed rules, so a document can never write to the instructions.
  * `store` is false: nothing here may be kept by the provider.
  */
-export function buildExtractionRequest<T>(request: ExtractionStepRequest<T>) {
+export function buildStructuredOutputRequest<T>(request: StructuredOutputRequest<T>) {
   return {
     model: request.model,
     instructions: request.instructions,
@@ -145,8 +145,10 @@ export function createOpenAiModelClient(client: OpenAI): ModelClient {
       };
     },
 
-    async runExtraction<T>(request: ExtractionStepRequest<T>): Promise<ExtractionStepResult<T>> {
-      const response = await client.responses.parse(buildExtractionRequest(request), {
+    async runStructuredOutput<T>(
+      request: StructuredOutputRequest<T>,
+    ): Promise<StructuredOutputResult<T>> {
+      const response = await client.responses.parse(buildStructuredOutputRequest(request), {
         signal: request.signal,
       });
 

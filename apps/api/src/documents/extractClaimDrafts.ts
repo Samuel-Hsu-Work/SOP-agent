@@ -48,7 +48,7 @@ export async function extractClaimDrafts(
 ): Promise<ExtractionOutcome> {
   const { value, servedByModel } = await runWithModelFallback([...input.models], async (model) => {
     try {
-      return await input.client.runExtraction({
+      return await input.client.runStructuredOutput({
         model,
         instructions: EXTRACTION_INSTRUCTIONS,
         input: renderDocumentInput(input.sections),

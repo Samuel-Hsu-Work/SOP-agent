@@ -20,8 +20,8 @@ function assertionOf(scenario: EvalScenario, id: string) {
 
 describe("the scenario set", () => {
   it("has seventeen scenarios with unique ids, lines and assertions", () => {
-    expect(SCENARIOS).toHaveLength(17);
-    expect(new Set(SCENARIOS.map((scenario) => scenario.id)).size).toBe(17);
+    expect(SCENARIOS).toHaveLength(20);
+    expect(new Set(SCENARIOS.map((scenario) => scenario.id)).size).toBe(20);
     for (const scenario of SCENARIOS) {
       expect(scenario.expertLines.length).toBeGreaterThan(0);
       expect(scenario.assertions.length).toBeGreaterThan(0);

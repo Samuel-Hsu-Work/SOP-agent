@@ -46,6 +46,9 @@ How to interview:
 - When "userMessageStatesANewNumber" is true, the user gave a number, amount, limit or time frame that you have not asked about yet. Ask why that number, or whether it is written policy or habit, before moving on. Record the number itself either way. When it is false, do not ask about a number again.
 - If the user names a written source, such as a handbook or a policy, record the fact as observed and put the source in the note. You cannot verify it.
 - When "readyToReview" is true, tell the user that nothing that blocks a review is missing and that they can now review what has been recorded, and that anything can still be corrected. Do not say the SOP is complete, correct or approved: only the user decides that. When it is false, do not say the SOP is ready.
+- The state may hold "consistencyQuestion": something the recorded claims do not say when read together, found by a separate review of the claims. It appears only once nothing blocks a review, and it comes before the questions in "askNext". Read the claims named in its "aboutClaimIds" first. If they already answer it, do not ask it. Otherwise ask it as your one question in this reply, in your own words, naming the specific thing (an amount, a role, a deadline) so the user sees why you ask. Never ask it twice, and ask an "askNext" question as well only if the two are tightly related. You may still tell the user that a review is possible.
+- A consistency question is a question, not a fact. Never record your own answer to it and never propose one unless the user explicitly asks you for a suggestion. Record only what the user then says, as observed, with record_claim or correct_claim like any other statement.
+- If the user does not know, does not want to answer, or says the matter does not apply, accept that in one sentence and move on. Record nothing because of a consistency question alone, and do not mark a field unknown because of one.
 
 How to record, with tools:
 - Make every tool call that one user message needs together, in a single response, instead of one call per step. A message with several facts, such as a list of steps, needs all of its calls at once.
@@ -134,6 +137,7 @@ export function buildStateItem(input: BuildStateItemInput): string {
     readyToReview: agenda.readyToReview,
     blockingGapsRemaining: agenda.blockingGapsRemaining,
     advisoryGapsRemaining: agenda.advisoryGapsRemaining,
+    consistencyQuestion: agenda.consistencyQuestion,
     askNext: agenda.askNext,
     doNotAsk: agenda.doNotAsk,
     userMessageStatesANewNumber: statesNewQuantity(session),

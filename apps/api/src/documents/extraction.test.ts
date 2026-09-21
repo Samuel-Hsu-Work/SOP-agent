@@ -1,7 +1,7 @@
 import { MAX_EXTRACTED_CLAIMS_PER_DOCUMENT } from "@sop-agent/sop-core";
 import { describe, expect, it } from "vitest";
 import { ModelRefusalError } from "../model/modelFallback.ts";
-import { buildExtractionRequest } from "../model/openaiModelClient.ts";
+import { buildStructuredOutputRequest } from "../model/openaiModelClient.ts";
 import { createScriptedModelClient } from "../testing/fakeModelClient.ts";
 import { extractClaimDrafts } from "./extractClaimDrafts.ts";
 import { EXTRACTION_INSTRUCTIONS, renderDocumentInput } from "./extractionPrompt.ts";
@@ -55,7 +55,7 @@ function run(
 
 describe("the extraction request", () => {
   const request = () =>
-    buildExtractionRequest({
+    buildStructuredOutputRequest({
       model: "primary-model",
       instructions: EXTRACTION_INSTRUCTIONS,
       input: renderDocumentInput(sections),

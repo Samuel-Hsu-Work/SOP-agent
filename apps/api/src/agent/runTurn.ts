@@ -1,7 +1,14 @@
 import {
   type AssistantMessage,
+  type ConsistencyCategory,
+  type ConsistencyQuestion,
+  currentConsistencyReview,
+  keepConsistencyReviewForCurrentClaims,
   MAX_ASSISTANT_MESSAGE_LENGTH,
   MAX_TOOL_CALLS_PER_MESSAGE,
+  markConsistencyQuestionOffered,
+  needsConsistencyReview,
+  nextConsistencyQuestion,
   type RecordedToolCall,
   type SopSession,
   sopSessionSchema,
@@ -10,6 +17,7 @@ import {
 } from "@sop-agent/sop-core";
 import type { ModelClient, ModelConversationItem } from "../model/modelClient.ts";
 import { ModelOutputError } from "../model/modelFallback.ts";
+import { runConsistencyReview } from "./consistencyReview.ts";
 import {
   buildStateItem,
   INSTRUCTIONS,
@@ -47,6 +55,13 @@ export interface TurnStats {
   historyEntriesWritten: number;
   withdrawLimitHits: number;
   conflictResolutionLimitHits: number;
+  /** Whether the consistency review ran this turn, failed (and was skipped), or was not needed. */
+  consistencyReview: "not_needed" | "ran" | "failed";
+  /** Findings the review added this turn, and findings still waiting to be asked at its end. */
+  consistencyFindingsRaised: number;
+  consistencyFindingsWaiting: number;
+  /** The category of the question handed to the agent for its reply, or null. Never its text. */
+  consistencyQuestionCategory: ConsistencyCategory | null;
   /** The size of the state item on the last step. */
   stateItemChars: number;
   inputTokens: number;
@@ -73,6 +88,10 @@ export function createEmptyTurnStats(): TurnStats {
     historyEntriesWritten: 0,
     withdrawLimitHits: 0,
     conflictResolutionLimitHits: 0,
+    consistencyReview: "not_needed",
+    consistencyFindingsRaised: 0,
+    consistencyFindingsWaiting: 0,
+    consistencyQuestionCategory: null,
     stateItemChars: 0,
     inputTokens: 0,
     cachedInputTokens: 0,
@@ -144,6 +163,9 @@ export async function runAgentTurn(input: RunAgentTurnInput): Promise<RunAgentTu
   let withdrawalsSoFar = 0;
   let conflictResolutionsSoFar = 0;
   let workingStateSize = measureStateItem(working);
+  // The review runs at most once a turn, and only when the claims have changed since the last one.
+  let hasTriedConsistencyReview = false;
+  let offeredQuestion: ConsistencyQuestion | null = null;
 
   const forwardTextDelta = (delta: string) => {
     if (delta.length === 0) return;
@@ -159,6 +181,30 @@ export async function runAgentTurn(input: RunAgentTurnInput): Promise<RunAgentTu
   for (let step = 1; ; step += 1) {
     const allowToolCalls = step <= MAX_TOOL_ROUNDS;
     separatorPending = assistantText.length > 0;
+
+    if (!hasTriedConsistencyReview && needsConsistencyReview(working)) {
+      hasTriedConsistencyReview = true;
+      const review = await runConsistencyReview({
+        client,
+        model,
+        session: working,
+        context,
+        signal,
+      });
+      // The call is billed whether or not its answer held up.
+      stats.inputTokens += review.inputTokens;
+      stats.cachedInputTokens += review.cachedInputTokens;
+      stats.outputTokens += review.outputTokens;
+      if (review.status === "ran") {
+        working = review.session;
+        stats.consistencyReview = "ran";
+        stats.consistencyFindingsRaised = review.raisedCount;
+      } else {
+        working = keepConsistencyReviewForCurrentClaims(working, context);
+        stats.consistencyReview = "failed";
+      }
+    }
+    offeredQuestion = nextConsistencyQuestion(working);
 
     const stateItem = buildStateItem({ session: working, allowToolCalls });
     stats.stateItemChars = stateItem.length;
@@ -254,6 +300,15 @@ export async function runAgentTurn(input: RunAgentTurnInput): Promise<RunAgentTu
 
     if (step === MAX_TOOL_ROUNDS) stats.toolRoundCapHit = true;
   }
+
+  // The last step's state item carried the question, so it counts as asked once, whatever the reply says.
+  if (offeredQuestion !== null) {
+    working = markConsistencyQuestionOffered(working, offeredQuestion.findingId, context);
+    stats.consistencyQuestionCategory = offeredQuestion.category;
+  }
+  stats.consistencyFindingsWaiting =
+    currentConsistencyReview(working)?.findings.filter((finding) => !finding.wasOffered).length ??
+    0;
 
   const replyText = assistantText.trim();
   if (replyText.length === 0) {
