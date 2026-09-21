@@ -41,10 +41,12 @@ export interface TurnStats {
   claimsCorrected: number;
   claimsMarkedUnknown: number;
   claimsWithdrawn: number;
+  conflictsResolved: number;
   /** Writes that found the same claim already there. */
   claimsUnchanged: number;
   historyEntriesWritten: number;
   withdrawLimitHits: number;
+  conflictResolutionLimitHits: number;
   /** The size of the state item on the last step. */
   stateItemChars: number;
   inputTokens: number;
@@ -66,9 +68,11 @@ export function createEmptyTurnStats(): TurnStats {
     claimsCorrected: 0,
     claimsMarkedUnknown: 0,
     claimsWithdrawn: 0,
+    conflictsResolved: 0,
     claimsUnchanged: 0,
     historyEntriesWritten: 0,
     withdrawLimitHits: 0,
+    conflictResolutionLimitHits: 0,
     stateItemChars: 0,
     inputTokens: 0,
     cachedInputTokens: 0,
@@ -106,6 +110,7 @@ function countChange(stats: TurnStats, outcome: ToolCallOutcome): void {
     case "updated":
       if (outcome.toolName === "record_claim") stats.claimsRecorded += 1;
       else if (outcome.toolName === "correct_claim") stats.claimsCorrected += 1;
+      else if (outcome.toolName === "resolve_conflict") stats.conflictsResolved += 1;
       else stats.claimsMarkedUnknown += 1;
       return;
     case null:
@@ -137,6 +142,7 @@ export async function runAgentTurn(input: RunAgentTurnInput): Promise<RunAgentTu
 
   const stats = createEmptyTurnStats();
   let withdrawalsSoFar = 0;
+  let conflictResolutionsSoFar = 0;
   let workingStateSize = measureStateItem(working);
 
   const forwardTextDelta = (delta: string) => {
@@ -197,6 +203,7 @@ export async function runAgentTurn(input: RunAgentTurnInput): Promise<RunAgentTu
         call,
         sourceMessageId: userMessageId,
         withdrawalsSoFar,
+        conflictResolutionsSoFar,
         context,
       });
 
@@ -233,10 +240,14 @@ export async function runAgentTurn(input: RunAgentTurnInput): Promise<RunAgentTu
         stats.toolCallsApplied += 1;
         countChange(stats, outcome);
         if (outcome.change === "withdrawn") withdrawalsSoFar += 1;
+        if (outcome.toolName === "resolve_conflict") conflictResolutionsSoFar += 1;
       } else {
         stats.toolCallsRejected += 1;
         if (outcome.rejectionCode !== null) stats.rejectionCodes.push(outcome.rejectionCode);
         if (outcome.rejectionCode === "withdraw_limit_reached") stats.withdrawLimitHits += 1;
+        if (outcome.rejectionCode === "conflict_resolution_limit_reached") {
+          stats.conflictResolutionLimitHits += 1;
+        }
       }
       conversation.push({ kind: "tool_result", callId: call.callId, output: outcome.modelResult });
     }

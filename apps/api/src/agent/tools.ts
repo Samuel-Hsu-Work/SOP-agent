@@ -11,6 +11,7 @@ import {
   CORRECT_CLAIM_TOOL_NAME,
   MARK_CLAIM_UNKNOWN_TOOL_NAME,
   RECORD_CLAIM_TOOL_NAME,
+  RESOLVE_CONFLICT_TOOL_NAME,
   type RecordedToolCall,
   SOP_FIELD_NAMES,
   type SopSession,
@@ -20,6 +21,9 @@ import {
 } from "@sop-agent/sop-core";
 import { z } from "zod";
 import type { ModelToolCall, ModelToolSpec } from "../model/modelClient.ts";
+
+/** How many conflicts one turn may resolve. Each one replaces two claims, so it is bounded like a withdrawal. */
+export const MAX_CONFLICT_RESOLUTIONS_PER_TURN = 3;
 
 /** How many claims one turn may remove. A wrongly withdrawn claim stays visible in the history. */
 export const MAX_WITHDRAWALS_PER_TURN = 3;
@@ -93,6 +97,19 @@ const markClaimUnknownToolSchema = z.object({
   note: z.string().describe("What exactly is not known."),
 });
 
+const resolveConflictToolSchema = z.object({
+  claimId: z
+    .string()
+    .describe("The id of either claim that is in the conflict. Both are resolved together."),
+  statement: z
+    .string()
+    .describe(
+      "The user's final answer, in one plain sentence, in their own terms. It replaces both sides. If the user says the two sides agree, write the wording they agreed on.",
+    ),
+  effectiveDate: effectiveDateSchema,
+  note: z.string().nullable().describe("A short remark, such as why the user chose this, or null."),
+});
+
 const withdrawClaimToolSchema = z.object({
   claimId: z.string().describe("The id of the claim that should not be there."),
   note: z.string().describe("Why the user says it should be removed."),
@@ -128,6 +145,11 @@ export const AGENT_TOOLS: readonly ModelToolSpec[] = [
     name: WITHDRAW_CLAIM_TOOL_NAME,
     description: `Remove a claim the user says should not be there at all. Prefer correct_claim when the user gives a replacement. Not available for a confirmed claim. At most ${MAX_WITHDRAWALS_PER_TURN} per turn.`,
     parameters: withdrawClaimToolSchema,
+  },
+  {
+    name: RESOLVE_CONFLICT_TOOL_NAME,
+    description: `Record the user's final answer to a conflict: two claims about the same thing that disagree, for example what the user said and what an uploaded document says. Call it only after the user has given their answer in this message. Both claims move to the history and the answer is recorded as one claim. Never choose a side yourself. Not available for a claim that is not in a conflict. At most ${MAX_CONFLICT_RESOLUTIONS_PER_TURN} per turn.`,
+    parameters: resolveConflictToolSchema,
   },
 ];
 
@@ -182,6 +204,8 @@ export interface ExecuteToolCallInput {
   sourceMessageId: string;
   /** How many claims this turn has already withdrawn. */
   withdrawalsSoFar: number;
+  /** How many conflicts this turn has already resolved. */
+  conflictResolutionsSoFar: number;
   context: WriteContext;
 }
 
@@ -261,6 +285,25 @@ function parseToolCall(
           field: args.field,
           claimId: args.claimId,
           note: args.note,
+          sourceMessageId,
+        },
+      };
+    }
+    case "resolve_conflict": {
+      const parsed = resolveConflictToolSchema.safeParse(argumentsValue);
+      if (!parsed.success) return null;
+      const args = parsed.data;
+      return {
+        toolName,
+        requestedField: fieldOfClaim(args.claimId),
+        requestedStatus: "observed",
+        command: {
+          kind: "resolveConflict",
+          createdByType: "agent",
+          claimId: args.claimId,
+          statement: args.statement,
+          note: args.note,
+          effectiveDate: args.effectiveDate,
           sourceMessageId,
         },
       };
@@ -349,7 +392,8 @@ function acceptedOutcome(
  * tool result so it can recover, instead of aborting the turn.
  */
 export function executeToolCall(input: ExecuteToolCallInput): ToolCallOutcome {
-  const { session, call, sourceMessageId, withdrawalsSoFar, context } = input;
+  const { session, call, sourceMessageId, withdrawalsSoFar, conflictResolutionsSoFar, context } =
+    input;
 
   if (!isAgentToolName(call.name)) {
     return rejected(session, call, null, null, null, "unknown_tool", "There is no such tool.");
@@ -392,6 +436,21 @@ export function executeToolCall(input: ExecuteToolCallInput): ToolCallOutcome {
       parsed.requestedStatus,
       "withdraw_limit_reached",
       `At most ${MAX_WITHDRAWALS_PER_TURN} claims can be withdrawn in one turn. Ask the user to confirm before removing more.`,
+    );
+  }
+
+  if (
+    parsed.command.kind === "resolveConflict" &&
+    conflictResolutionsSoFar >= MAX_CONFLICT_RESOLUTIONS_PER_TURN
+  ) {
+    return rejected(
+      session,
+      call,
+      toolName,
+      parsed.requestedField,
+      parsed.requestedStatus,
+      "conflict_resolution_limit_reached",
+      `At most ${MAX_CONFLICT_RESOLUTIONS_PER_TURN} conflicts can be resolved in one turn. Resolve the rest after the user's next message.`,
     );
   }
 

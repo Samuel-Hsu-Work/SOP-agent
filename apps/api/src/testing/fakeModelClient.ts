@@ -1,26 +1,58 @@
 import type {
+  ExtractionStepRequest,
+  ExtractionStepResult,
   ModelClient,
   ModelStepRequest,
   ModelStepResult,
   ModelToolCall,
 } from "../model/modelClient.ts";
+import { ModelOutputError } from "../model/modelFallback.ts";
 
 /** One scripted model call. It may stream text, return tool calls, or throw. */
 export type ScriptedStep = (
   request: ModelStepRequest,
 ) => Promise<ModelStepResult> | ModelStepResult;
 
+/** One scripted extraction call. It returns the model's output, or throws like a refusing model. */
+export type ScriptedExtractionStep = (
+  request: ExtractionStepRequest<unknown>,
+) => Promise<unknown> | unknown;
+
 export interface ScriptedModelClient extends ModelClient {
   /** Every request the code under test sent, in order. */
   readonly requests: ModelStepRequest[];
+  /** Every extraction request the code under test sent, in order. */
+  readonly extractionRequests: ExtractionStepRequest<unknown>[];
 }
 
 /** Steps are consumed in order across every call, including retries on a fallback model. */
-export function createScriptedModelClient(steps: ScriptedStep[]): ScriptedModelClient {
+export function createScriptedModelClient(
+  steps: ScriptedStep[],
+  extractionSteps: ScriptedExtractionStep[] = [],
+): ScriptedModelClient {
   const requests: ModelStepRequest[] = [];
+  const extractionRequests: ExtractionStepRequest<unknown>[] = [];
   let nextStep = 0;
+  let nextExtractionStep = 0;
   return {
     requests,
+    extractionRequests,
+    async runExtraction<T>(request: ExtractionStepRequest<T>): Promise<ExtractionStepResult<T>> {
+      extractionRequests.push(request as ExtractionStepRequest<unknown>);
+      const step = extractionSteps[nextExtractionStep];
+      nextExtractionStep += 1;
+      if (step === undefined) throw new Error("The scripted extraction ran out of steps.");
+      const output = await step(request as ExtractionStepRequest<unknown>);
+      // The real client reports an answer that does not match the schema as unusable output.
+      const parsed = request.schema.safeParse(output);
+      if (!parsed.success) throw new ModelOutputError("The model returned unusable output.");
+      return {
+        output: parsed.data,
+        inputTokens: 100,
+        cachedInputTokens: 0,
+        outputTokens: 50,
+      };
+    },
     async runStep(request) {
       requests.push(request);
       const step = steps[nextStep];
@@ -119,4 +151,17 @@ export function withdrawClaimCall(
   note = "The user said it does not apply.",
 ): ModelToolCall {
   return toolCall("withdraw_claim", { claimId, note });
+}
+
+export function resolveConflictCall(
+  claimId: string,
+  statement: string,
+  overrides: { effectiveDate?: string | null; note?: string | null } = {},
+): ModelToolCall {
+  return toolCall("resolve_conflict", {
+    claimId,
+    statement,
+    effectiveDate: overrides.effectiveDate ?? null,
+    note: overrides.note ?? null,
+  });
 }

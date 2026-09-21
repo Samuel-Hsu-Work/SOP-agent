@@ -9,7 +9,6 @@ import {
   setAdvisoryAcknowledgement,
 } from "@sop-agent/sop-core";
 import {
-  buildClaim,
   createDeterministicContext,
   createSessionWithUserMessage,
 } from "@sop-agent/sop-core/testing";
@@ -25,8 +24,8 @@ export interface ApprovedSessionOptions {
 
 /**
  * A session that went through the real path: statements recorded, some confirmed, an unknown, a
- * conflict and an extracted claim in advisory fields, every advisory gap acknowledged, then
- * approved. Nothing here is hand-forged except the two claims that only slice 5 can create.
+ * conflict pair and an extracted claim in advisory fields, every advisory gap acknowledged, then
+ * approved. Every claim is written through `applyClaim`; nothing is forged by hand.
  */
 export function buildApprovedSession(options: ApprovedSessionOptions = {}): SopSession {
   const context = createDeterministicContext();
@@ -90,22 +89,35 @@ export function buildApprovedSession(options: ApprovedSessionOptions = {}): SopS
     note: "Which system holds the refund receipts.",
     sourceMessageId: messageId,
   });
-  const handBuilt = (field: SopFieldName, status: "conflict" | "extracted", text: string) =>
-    buildClaim({
-      claimId: `built-${field}`,
-      field,
-      status,
-      value: { kind: "statement", text },
-      source: { type: "employee_statement", reference: { kind: "message", messageId } },
-    });
-  session = {
-    ...session,
-    claims: [
-      ...session.claims,
-      handBuilt("controls", "conflict", "Refunds over 500 need a second approver."),
-      handBuilt("decisionRules", "extracted", "Approve automatically under 50."),
-    ],
-  };
+  // A document says one thing about controls, and the user said another: a real conflict pair, and
+  // a rule from a document that nobody disputed, both written through the real commands.
+  session = apply(session, {
+    kind: "ingestExtracted",
+    createdByType: "extraction",
+    field: "decisionRules",
+    statement: "Approve automatically under 50.",
+    citation: {
+      documentName: "refund-policy.pdf",
+      location: "p.2",
+      quote: "Refunds under 50 are approved automatically.",
+    },
+    effectiveDate: null,
+    note: null,
+  });
+  session = apply(session, {
+    kind: "ingestExtracted",
+    createdByType: "extraction",
+    field: "controls",
+    statement: "Refunds over 500 need a second approver.",
+    citation: {
+      documentName: "refund-policy.pdf",
+      location: "p.3",
+      quote: "Refunds over 500 need a second approver.",
+    },
+    effectiveDate: null,
+    note: null,
+  });
+  session = record(session, "controls", "Refunds over 800 need a second approver.");
 
   for (const field of checkFinalization(session).advisoryGapFields) {
     const result = setAdvisoryAcknowledgement(session, { field, acknowledged: true }, context);

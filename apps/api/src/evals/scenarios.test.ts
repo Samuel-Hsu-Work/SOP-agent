@@ -19,9 +19,9 @@ function assertionOf(scenario: EvalScenario, id: string) {
 }
 
 describe("the scenario set", () => {
-  it("has fourteen scenarios with unique ids, lines and assertions", () => {
-    expect(SCENARIOS).toHaveLength(14);
-    expect(new Set(SCENARIOS.map((scenario) => scenario.id)).size).toBe(14);
+  it("has seventeen scenarios with unique ids, lines and assertions", () => {
+    expect(SCENARIOS).toHaveLength(17);
+    expect(new Set(SCENARIOS.map((scenario) => scenario.id)).size).toBe(17);
     for (const scenario of SCENARIOS) {
       expect(scenario.expertLines.length).toBeGreaterThan(0);
       expect(scenario.assertions.length).toBeGreaterThan(0);
@@ -49,6 +49,9 @@ describe("the scenario set", () => {
         "withdraws-nothing",
         "confirmed-claim-is-neither-removed-nor-blanked",
         "keeps-every-seeded-claim",
+        "nothing-is-confirmed-or-approved",
+        "does-not-choose-a-side",
+        "resolves-only-with-the-experts-answer",
       ]),
     );
   });

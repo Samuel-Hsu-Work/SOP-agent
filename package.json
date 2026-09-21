@@ -11,14 +11,14 @@
     "typecheck": "pnpm -r --if-present typecheck",
     "lint": "biome check .",
     "format": "biome format --write .",
-    "spike:generate-fixtures": "pnpm --filter @sop-agent/extraction-spike generate-fixtures",
-    "spike:extraction": "pnpm --filter @sop-agent/extraction-spike start",
     "dev:api": "pnpm --filter @sop-agent/api dev",
     "dev:web": "pnpm --filter @sop-agent/web dev",
     "dev": "pnpm -r --parallel --filter @sop-agent/api --filter @sop-agent/web dev",
     "smoke:api": "pnpm --filter @sop-agent/api smoke",
     "eval": "pnpm --filter @sop-agent/api eval",
-    "eval:recheck": "pnpm --filter @sop-agent/api eval:recheck"
+    "eval:recheck": "pnpm --filter @sop-agent/api eval:recheck",
+    "fixtures:documents": "pnpm --filter @sop-agent/api fixtures",
+    "measure:extraction": "pnpm --filter @sop-agent/api measure:extraction"
   },
   "devDependencies": {
     "@biomejs/biome": "^2.5.14",

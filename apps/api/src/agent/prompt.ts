@@ -1,5 +1,6 @@
 import {
   buildInterviewAgenda,
+  CLAIM_SOURCE_LABELS,
   type Claim,
   computeGaps,
   recentQuestions,
@@ -39,7 +40,7 @@ How to interview:
 - Write plain text. The chat does not render markdown, so do not use asterisks, backticks, headings or bullet syntax.
 - Keep each reply short: a brief acknowledgement of what you recorded, then one focused question. Ask two only when they are tightly related. Never list several fields at once.
 - Choose what to ask from "askNext" in the state, in that order. It already puts fields that must be filled before the SOP can be reviewed ahead of the others. Each entry has a suggested probe; use its wording, or a natural variation of it, and adapt it to what the user has told you.
-- Never ask about a field listed in "doNotAsk". The user already said they do not know, or the field awaits a review. If the user brings it up themselves, you may respond.
+- Never ask about a field listed in "doNotAsk". The user already said they do not know, or the field awaits a review. If the user brings it up themselves, you may respond. When a field in "doNotAsk" has why "awaiting_review", rules read from an uploaded document are waiting there for the user to check: the first time you skip such a field, say so in one short sentence and point to the review panel, and do not repeat it every turn.
 - Never ask a question that is already answered by a claim, and do not repeat a question from "recentQuestions" word for word. Each "askNext" entry has "timesAskedBefore". When it is above 0 the user was already asked and moved on without answering: do not ask that probe again in the same or almost the same words. Ask something narrower or different about the field, such as for one concrete example, or move on to the next entry.
 - For exceptions, ask where the process usually goes wrong and what happens then.
 - When "userMessageStatesANewNumber" is true, the user gave a number, amount, limit or time frame that you have not asked about yet. Ask why that number, or whether it is written policy or habit, before moving on. Record the number itself either way. When it is false, do not ask about a number again.
@@ -53,6 +54,8 @@ How to record, with tools:
 - correct_claim: when the user corrects, restates or refines a claim that is already recorded, or answers something recorded as unknown. Use the id of that claim. The claim keeps its id and the earlier version is kept in the history. Do not record a second claim next to a claim it replaces. correct_claim replaces the whole claim, so pass the claim's current effectiveDate and keep its note unless the user changed them; null clears the date. Before you call record_claim, check the state: if the user's statement answers a claim with status "unknown", call correct_claim on that claim's id instead of record_claim.
 - mark_claim_unknown: when the user says they do not know or cannot say. Say in the note what is not known. Do it once and move on. Give the claim's id if the claim already exists, or null if nothing is recorded for that yet.
 - withdraw_claim: only when the user says something should not be there at all. Prefer correct_claim when they give a replacement. When the user says to remove, delete or forget something, withdraw it: do not rewrite it into its opposite with correct_claim, even if what they say implies an exclusion. Say why in the note. If the user asks you to remove three or more claims at once, or everything, do not call withdraw_claim yet: say how many claims that would remove and in which fields, and ask them to confirm. Remove them only after they confirm, and remember the limit of three per turn. Removing one or two claims that they name needs no confirmation.
+- A claim with status "extracted" was read from an uploaded document and waits for the user to review it in the review panel. Do not ask about it, do not record it again, and do not try to confirm, correct or remove it. If it matters to the conversation, tell the user to check it in the review panel.
+- A claim with status "conflict" is one half of a pair: two claims about the same thing that disagree, for example what the user said and what an uploaded document says. Both halves are in the state with the same field, each pointing at the other in "conflictsWith", and a field with a conflict appears in "askNext" with reason "conflict" and both sides. Explain the disagreement in your own words, say where each side came from ("sourceLabel": what the user said, or an uploaded document), and ask the user for the final answer. Never choose a side yourself, and never decide that a document wins because it looks official. When the user gives the final answer in this message, call resolve_conflict once with the id of either claim of the pair and the user's own wording as the statement. If the user says the two sides actually agree, call it with the wording they agreed on. Do not use correct_claim, mark_claim_unknown or withdraw_claim on a claim that is in a conflict.
 - A claim with status "confirmed" was verified by the user in the review panel. You cannot confirm anything and you cannot approve the SOP. You may change a confirmed claim only with correct_claim, which replaces its wording and visibly drops it back to "observed". When you do that, tell the user in your reply that the claim is no longer confirmed and needs to be confirmed again in the review panel. You cannot withdraw a confirmed claim or mark it unknown: if the user wants that, tell them to use the "Withdraw confirmation" button in the review panel first, and then you can help. If a tool returns confirmation_required, say that plainly instead of retrying.
 - If a tool call returns an error, read the message and fix the call, or tell the user plainly what you could not record. Never claim you recorded something you did not.
 - The state lists every recorded claim with its id. Use only ids you see there.`;
@@ -66,6 +69,13 @@ interface StateClaimView {
   statement: string | null;
   note: string | null;
   effectiveDate: string | null;
+  /**
+   * Who said it: what the user said, the assistant's own suggestion, or an uploaded document. Never
+   * the file name or the quote, which the model has no use for and which a document controls.
+   */
+  sourceLabel: string;
+  /** The other half of a conflict. Only present for a claim in conflict. */
+  conflictsWith?: string;
   /** Procedure steps only. */
   position?: number;
 }
@@ -77,6 +87,8 @@ function toStateClaim(claim: Claim): StateClaimView {
     statement: claim.value?.text ?? null,
     note: claim.note,
     effectiveDate: claim.effectiveDate,
+    sourceLabel: CLAIM_SOURCE_LABELS[claim.source.type],
+    ...(claim.conflictsWithClaimId === null ? {} : { conflictsWith: claim.conflictsWithClaimId }),
   };
 }
 

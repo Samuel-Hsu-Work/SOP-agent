@@ -1,5 +1,6 @@
 import type { SopExportRefusalReason } from "@sop-agent/sop-core";
 import OpenAI from "openai";
+import type { DocumentFailureCategory } from "./documents/documentParseError.ts";
 import { ModelOutputError, ModelRefusalError } from "./model/modelFallback.ts";
 
 /**
@@ -42,9 +43,11 @@ export interface ChatTurnLog {
   claimsCorrected: number;
   claimsMarkedUnknown: number;
   claimsWithdrawn: number;
+  conflictsResolved: number;
   claimsUnchanged: number;
   historyEntriesWritten: number;
   withdrawLimitHits: number;
+  conflictResolutionLimitHits: number;
   stateItemChars: number;
   /** The first field the interview agenda proposed at the start of the turn: one of 13 names. */
   agendaTopField: string | null;
@@ -81,6 +84,43 @@ export interface SopPdfLog {
   replacedCharacters: number | null;
   durationMs: number;
 }
+
+/**
+ * The single log line written per document upload that reaches document handling. Counts, timings
+ * and categories only: never the file name, a heading, a location, a quote, a claim, a model's
+ * refusal text, a library's error message, or a session id (the route never receives a session).
+ */
+export interface DocumentExtractLog {
+  event: "document_extract";
+  outcome: "extracted" | "refused" | "failed";
+  /** A fixed category. Null when the upload was not refused. */
+  refusalReason: DocumentRefusalReason | null;
+  fileKind: "pdf" | "docx" | "markdown" | "text" | "unknown";
+  byteLength: number;
+  pageCount: number | null;
+  sectionCount: number | null;
+  characterCount: number | null;
+  claimsProposed: number;
+  claimsVerified: number;
+  claimsRejected: number;
+  rejectionReasons: Record<string, number>;
+  claimsTruncated: number;
+  servedByModel: string | null;
+  failedAttempts: { model: string; kind: ModelFailureKind }[];
+  inputTokens: number;
+  cachedInputTokens: number;
+  outputTokens: number;
+  parseMs: number;
+  modelMs: number;
+  durationMs: number;
+}
+
+export type DocumentRefusalReason =
+  | DocumentFailureCategory
+  | "model_unavailable"
+  | "busy"
+  | "invalid_upload"
+  | "upload_too_large";
 
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 

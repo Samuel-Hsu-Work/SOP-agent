@@ -1,0 +1,36 @@
+{
+  "note": "For each clean sample, passages that hold an SOP rule and the field each belongs in. `pnpm measure:extraction` checks that a verified claim quoting each passage sits in that field. This is a small answer key, not a complete one: it measures whether field labels are right, which quote verification cannot.",
+  "files": {
+    "vendor-payment-policy.md": [
+      { "field": "purpose", "quoteContains": "controls how payments to external vendors are authorized" },
+      { "field": "authorization", "quoteContains": "Every vendor payment above $10,000 requires the written approval" },
+      { "field": "evidence", "quoteContains": "Finance stores the invoice, the purchase order and both approvals for seven years" }
+    ],
+    "vendor-payment-memo.md": [
+      { "field": "authorization", "quoteContains": "vendor payments up to $25,000 need the approval of the Finance Director only" },
+      { "field": "authorization", "quoteContains": "Payments above $25,000 still require both the budget owner and the CFO" }
+    ],
+    "incident-escalation-guide.md": [
+      { "field": "purpose", "quoteContains": "describes how the on-call engineer handles a production incident" },
+      { "field": "trigger", "quoteContains": "Start this procedure when a monitoring alert" },
+      { "field": "procedure", "quoteContains": "acknowledges the alert within 5 minutes" },
+      { "field": "procedure", "quoteContains": "opens an incident ticket" },
+      { "field": "authorization", "quoteContains": "Any database restore must be approved by the Engineering Manager" },
+      { "field": "completionCriteria", "quoteContains": "An incident is closed when the service has been healthy for 60 minutes" }
+    ],
+    "refund-policy.pdf": [
+      { "field": "purpose", "quoteContains": "defines how customer refund requests are reviewed" },
+      { "field": "scope", "quoteContains": "applies to all refund requests for online orders" },
+      { "field": "authorization", "quoteContains": "Support agents may approve refunds of up to $200" },
+      { "field": "exceptions", "quoteContains": "receipt requirement is waived" },
+      { "field": "controls", "quoteContains": "QA team audits a random 5% sample" }
+    ],
+    "expense-handbook.docx": [
+      { "field": "purpose", "quoteContains": "explains how employees are reimbursed" },
+      { "field": "scope", "quoteContains": "All full-time and part-time employees" },
+      { "field": "authorization", "quoteContains": "A Director must approve reports above $500" },
+      { "field": "evidence", "quoteContains": "Attach a receipt for every item above $25" },
+      { "field": "exceptions", "quoteContains": "If a receipt is lost" }
+    ]
+  }
+}

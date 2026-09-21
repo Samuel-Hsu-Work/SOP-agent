@@ -126,7 +126,7 @@ describe("POST /chat: a normal turn", () => {
     expect(assistant?.role === "assistant" && assistant.model).toBe("primary-model");
   });
 
-  it("gives the model the four claim tools, fixed instructions, the user's message and the state last", async () => {
+  it("gives the model the five claim tools, fixed instructions, the user's message and the state last", async () => {
     const client = createScriptedModelClient([textStep("Hello.")]);
     const { app } = await createApp(client);
     await postChat(app, { session: emptySession(), message: "We handle refunds." });
@@ -137,6 +137,7 @@ describe("POST /chat: a normal turn", () => {
       "correct_claim",
       "mark_claim_unknown",
       "withdraw_claim",
+      "resolve_conflict",
     ]);
     expect(request?.allowToolCalls).toBe(true);
     expect(request?.instructions).not.toContain("<sop_state>");
@@ -273,6 +274,7 @@ describe("POST /chat: bad requests are refused before any model call", () => {
       effectiveDate: null,
       note: null,
       createdByType: "agent" as const,
+      conflictsWithClaimId: null,
       createdAt: "2026-01-01T00:00:00.000Z",
       updatedAt: "2026-01-01T00:00:00.000Z",
     }));
@@ -483,6 +485,7 @@ describe("POST /chat: the confirmed claim count", () => {
           effectiveDate: null,
           note: null,
           createdByType: "agent",
+          conflictsWithClaimId: null,
           createdAt: "2026-01-01T00:00:00.000Z",
           updatedAt: "2026-01-01T00:00:00.000Z",
         },

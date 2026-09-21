@@ -54,9 +54,35 @@ export interface ModelStepResult {
 }
 
 /**
+ * One call that returns a single structured answer, with no tools and no conversation. Document
+ * extraction uses it: the whole document travels in `input` as a user-role item, so document text
+ * is never part of `instructions`.
+ */
+export interface ExtractionStepRequest<T> {
+  model: string;
+  /** Fixed. Nothing that comes from a document may go here. */
+  instructions: string;
+  /** The untrusted text to read, already encoded by the caller. */
+  input: string;
+  schema: z.ZodType<T>;
+  schemaName: string;
+  maxOutputTokens: number;
+  signal: AbortSignal;
+}
+
+export interface ExtractionStepResult<T> {
+  output: T;
+  inputTokens: number;
+  cachedInputTokens: number;
+  outputTokens: number;
+}
+
+/**
  * Runs one model call. It throws `ModelRefusalError` if the model declines and `ModelOutputError`
  * if the output is cut off or unusable; other provider errors propagate as they are.
  */
 export interface ModelClient {
   runStep(request: ModelStepRequest): Promise<ModelStepResult>;
+  /** Same error rules as `runStep`: a refusal or unusable output throws, so the fallback can try another model. */
+  runExtraction<T>(request: ExtractionStepRequest<T>): Promise<ExtractionStepResult<T>>;
 }

@@ -6,7 +6,16 @@ export type SeedStep =
   | { kind: "record"; field: SopFieldName; statement: string; status?: "observed" | "proposed" }
   | { kind: "unknown"; field: SopFieldName; note: string }
   /** A claim a person has confirmed, built through the review action like a real one. */
-  | { kind: "confirmed"; field: SopFieldName; statement: string };
+  | { kind: "confirmed"; field: SopFieldName; statement: string }
+  /** A rule read from a document, built through the ingestion command like a real one. */
+  | {
+      kind: "extracted";
+      field: SopFieldName;
+      statement: string;
+      documentName?: string;
+      /** Defaults to text that says the statement, which is all a scenario needs. */
+      quote?: string;
+    };
 
 /**
  * A scripted simulated subject-matter expert. The lines are fixed, not generated: a scenario is a

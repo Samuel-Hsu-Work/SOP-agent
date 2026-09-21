@@ -63,13 +63,14 @@ describe("buildResponsesRequest", () => {
     expect(buildResponsesRequest(stepRequest({ allowToolCalls: false })).store).toBe(false);
   });
 
-  it("offers the four claim tools, each as a strict function", () => {
+  it("offers the five claim tools, each as a strict function", () => {
     const { tools } = buildResponsesRequest(stepRequest());
     expect(tools.map((tool) => ("name" in tool ? tool.name : null))).toEqual([
       "record_claim",
       "correct_claim",
       "mark_claim_unknown",
       "withdraw_claim",
+      "resolve_conflict",
     ]);
     for (const tool of tools) expect(tool).toMatchObject({ type: "function", strict: true });
   });

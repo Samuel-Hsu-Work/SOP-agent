@@ -1,5 +1,5 @@
 /**
- * Live smoke test: do the four claim tools work end to end on each configured model, with the state
+ * Live smoke test: do the five claim tools work end to end on each configured model, with the state
  * item sent last?
  *
  *   pnpm smoke:api
@@ -19,6 +19,9 @@ import {
 } from "@sop-agent/sop-core";
 import OpenAI from "openai";
 import { runAgentTurn } from "../agent/runTurn.ts";
+import { extractClaimDrafts } from "../documents/extractClaimDrafts.ts";
+import { parseDocument } from "../documents/parseDocument.ts";
+import type { ModelFailureKind } from "../logging.ts";
 import { readModelsFromEnvironment } from "../model/modelFallback.ts";
 import { createOpenAiModelClient } from "../model/openaiModelClient.ts";
 
@@ -198,6 +201,49 @@ for (const model of models) {
             : String(error);
       console.log(`\nFAIL  ${label}\n  ${detail}`);
     }
+  }
+}
+
+/**
+ * One document extraction per model: the structured-output call the upload route uses, on a tiny
+ * document, with the quote check applied to whatever comes back.
+ */
+const SMOKE_DOCUMENT =
+  "# Vendor Payment Policy\n\n## Approval authority\n\nEvery vendor payment above $10,000 requires the written approval of two people: the budget owner and the CFO.\n\n## Records\n\nFinance stores the invoice, the purchase order and both approvals for seven years.\n";
+
+for (const model of models) {
+  const label = `${model} | reads a document`;
+  try {
+    const parsed = await parseDocument({
+      bytes: Buffer.from(SMOKE_DOCUMENT, "utf8"),
+      fileName: "vendor-payment-policy.md",
+    });
+    const failedAttempts: { model: string; kind: ModelFailureKind }[] = [];
+    const outcome = await extractClaimDrafts({
+      client,
+      models: [model],
+      sections: parsed.sections,
+      documentName: "vendor-payment-policy.md",
+      signal: new AbortController().signal,
+      failedAttempts,
+    });
+    if (outcome.drafts.length === 0) throw new Error("expected at least one verified claim");
+    console.log(`\nPASS  ${label}`);
+    for (const draft of outcome.drafts) {
+      console.log(`  ${draft.field}: ${draft.statement}`);
+    }
+    console.log(
+      `  proposed ${outcome.proposedCount}, verified ${outcome.drafts.length}, rejected ${outcome.rejected.count} | tokens ${outcome.inputTokens} in, ${outcome.outputTokens} out`,
+    );
+  } catch (error) {
+    failures += 1;
+    const detail =
+      error instanceof OpenAI.APIError
+        ? `${error.name} (${error.status}): ${error.message}`
+        : error instanceof Error
+          ? `${error.name}: ${error.message}`
+          : String(error);
+    console.log(`\nFAIL  ${label}\n  ${detail}`);
   }
 }
 

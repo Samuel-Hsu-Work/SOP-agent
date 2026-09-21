@@ -13,10 +13,6 @@ coverage/
 # Local data
 *.sqlite
 *.sqlite-journal
-uploads/
-
-# Generated reports
-spikes/*/out/
 
 # Design documents are kept local, not tracked
 docs/

@@ -1,6 +1,8 @@
 import type OpenAI from "openai";
-import { zodResponsesFunction } from "openai/helpers/zod";
+import { zodResponsesFunction, zodTextFormat } from "openai/helpers/zod";
 import type {
+  ExtractionStepRequest,
+  ExtractionStepResult,
   ModelClient,
   ModelConversationItem,
   ModelStepRequest,
@@ -54,6 +56,22 @@ export function buildResponsesRequest(request: ModelStepRequest) {
     store: false as const,
     max_output_tokens: MAX_OUTPUT_TOKENS,
     ...(INCLUDE_ENCRYPTED_REASONING ? { include: ["reasoning.encrypted_content" as const] } : {}),
+  };
+}
+
+/**
+ * Builds the request for a structured extraction. The text to read goes in a user-role input item
+ * and `instructions` holds only the fixed rules, so a document can never write to the instructions.
+ * `store` is false: nothing here may be kept by the provider.
+ */
+export function buildExtractionRequest<T>(request: ExtractionStepRequest<T>) {
+  return {
+    model: request.model,
+    instructions: request.instructions,
+    input: [{ role: "user" as const, content: request.input }],
+    text: { format: zodTextFormat(request.schema, request.schemaName) },
+    store: false as const,
+    max_output_tokens: request.maxOutputTokens,
   };
 }
 
@@ -116,6 +134,31 @@ export function createOpenAiModelClient(client: OpenAI): ModelClient {
       return {
         toolCalls,
         providerItems: response.output.map(stripClientOnlyFields),
+        inputTokens: response.usage?.input_tokens ?? 0,
+        cachedInputTokens: response.usage?.input_tokens_details?.cached_tokens ?? 0,
+        outputTokens: response.usage?.output_tokens ?? 0,
+      };
+    },
+
+    async runExtraction<T>(request: ExtractionStepRequest<T>): Promise<ExtractionStepResult<T>> {
+      const response = await client.responses.parse(buildExtractionRequest(request), {
+        signal: request.signal,
+      });
+
+      for (const item of response.output) {
+        if (item.type !== "message") continue;
+        for (const content of item.content) {
+          if (content.type === "refusal") throw new ModelRefusalError(content.refusal);
+        }
+      }
+      if (response.status !== "completed") {
+        throw new ModelOutputError(`Response did not complete (${response.status}).`);
+      }
+      if (response.output_parsed === null || response.output_parsed === undefined) {
+        throw new ModelOutputError("The model returned no structured output.");
+      }
+      return {
+        output: response.output_parsed as T,
         inputTokens: response.usage?.input_tokens ?? 0,
         cachedInputTokens: response.usage?.input_tokens_details?.cached_tokens ?? 0,
         outputTokens: response.usage?.output_tokens ?? 0,

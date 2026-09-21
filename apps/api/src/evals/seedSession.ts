@@ -25,26 +25,40 @@ export function buildSeedSession(steps: readonly SeedStep[], context: WriteConte
   for (const step of steps) {
     const result = applyClaim(
       session,
-      step.kind === "record" || step.kind === "confirmed"
+      step.kind === "extracted"
         ? {
-            kind: "record",
-            createdByType: "agent",
+            kind: "ingestExtracted",
+            createdByType: "extraction",
             field: step.field,
-            status: step.kind === "record" ? (step.status ?? "observed") : "observed",
             statement: step.statement,
-            note: null,
+            citation: {
+              documentName: step.documentName ?? "policy-document.md",
+              location: "§ Rules",
+              quote: step.quote ?? `The document says: ${step.statement}`,
+            },
             effectiveDate: null,
-            sourceMessageId: earlierMessage.id,
-            insertBeforeClaimId: null,
+            note: null,
           }
-        : {
-            kind: "markUnknown",
-            createdByType: "agent",
-            field: step.field,
-            claimId: null,
-            note: step.note,
-            sourceMessageId: earlierMessage.id,
-          },
+        : step.kind === "record" || step.kind === "confirmed"
+          ? {
+              kind: "record",
+              createdByType: "agent",
+              field: step.field,
+              status: step.kind === "record" ? (step.status ?? "observed") : "observed",
+              statement: step.statement,
+              note: null,
+              effectiveDate: null,
+              sourceMessageId: earlierMessage.id,
+              insertBeforeClaimId: null,
+            }
+          : {
+              kind: "markUnknown",
+              createdByType: "agent",
+              field: step.field,
+              claimId: null,
+              note: step.note,
+              sourceMessageId: earlierMessage.id,
+            },
       context,
     );
     if (!result.ok) throw new Error(`Could not seed the scenario: ${result.error.code}`);

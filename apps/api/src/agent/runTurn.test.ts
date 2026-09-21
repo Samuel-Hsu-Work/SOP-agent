@@ -715,7 +715,7 @@ describe("runAgentTurn: tool calls", () => {
       textStep("Ok."),
     ]).promise;
     for (const claim of result.session.claims) {
-      expect(claim.source.reference.messageId).toBe(messageId);
+      expect(claim.source.reference).toEqual({ kind: "message", messageId });
     }
   });
 });

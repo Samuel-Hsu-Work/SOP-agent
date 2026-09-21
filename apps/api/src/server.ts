@@ -9,6 +9,7 @@ import Fastify, {
 import pino from "pino";
 import type { ModelClient } from "./model/modelClient.ts";
 import { registerChatRoute } from "./routes/chat.ts";
+import { registerDocumentExtractRoute } from "./routes/documentExtract.ts";
 import { registerSopPdfRoute } from "./routes/sopPdf.ts";
 
 /**
@@ -34,7 +35,15 @@ const ERROR_MESSAGES: Record<HttpErrorCode, string> = {
   sop_not_approved:
     "This SOP cannot be exported. It must be approved, with every gap and suggestion resolved.",
   payload_too_large: "The request is too large.",
-  unsupported_media_type: "The request must be JSON.",
+  unsupported_media_type: "The request body is not in a format this endpoint accepts.",
+  unsupported_document_type:
+    "That file is not a PDF, Word (.docx), Markdown or plain-text document, or it is not what its name says.",
+  document_has_no_text:
+    "That PDF has no text to read. It may be a scan or an image, and scanned documents are not supported.",
+  document_unreadable:
+    "That document could not be read. It may be encrypted, damaged, or too complex.",
+  model_unavailable: "The document reader is unavailable right now. Try again in a moment.",
+  extraction_busy: "Another document is being read. Try again in a moment.",
   internal_error: "Something went wrong on the server.",
 };
 
@@ -96,6 +105,8 @@ export async function buildServer(deps: ServerDependencies): Promise<FastifyInst
   });
 
   registerSopPdfRoute(app);
+
+  await registerDocumentExtractRoute(app, { modelClient: deps.modelClient, models: deps.models });
 
   return app;
 }
