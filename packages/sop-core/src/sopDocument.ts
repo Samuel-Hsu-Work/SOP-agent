@@ -81,6 +81,17 @@ export interface SopDocument {
   version: string;
   status: SessionStatus;
   approvedAt: string | null;
+  /**
+   * What the approval does and does not mean, for the document-control block. Null for a draft.
+   * Approval is the interviewed person's sign-off, so a statement they made and never confirmed
+   * is still their own word, and the document says so instead of implying it was verified.
+   */
+  approvalBasis: string | null;
+  /**
+   * The Governance section's stated items, repeated in the document-control block so the owner and
+   * the review cycle are visible at the top. The section itself still prints them with their tags.
+   */
+  governanceSummary: string[];
   /** All 13 sections, blocking fields first, empty ones included. */
   sections: SopDocumentSection[];
   /** The tags that appear in this document, each with what it means. */
@@ -91,6 +102,21 @@ export interface SopDocument {
     confirmedClaims: number;
     totalClaims: number;
   };
+}
+
+function approvalBasisFor(
+  status: SessionStatus,
+  counts: { confirmedClaims: number; totalClaims: number },
+): string | null {
+  if (status !== "approved") return null;
+  const { confirmedClaims, totalClaims } = counts;
+  if (confirmedClaims === totalClaims) {
+    return "Approved by the person interviewed. Every claim was individually confirmed.";
+  }
+  if (confirmedClaims === 0) {
+    return "Approved by the person interviewed. No claim was individually confirmed: the statements below are that person's own words and were not independently verified.";
+  }
+  return `Approved by the person interviewed. ${confirmedClaims} of ${totalClaims} claims were individually confirmed; the others are that person's own statements and were not independently verified.`;
 }
 
 function gapNoticeFor(gap: FieldGap | null): string | null {
@@ -201,21 +227,26 @@ export function buildSopDocument(session: SopSession): SopDocument {
   });
 
   const present = new Set(session.claims.map((claim) => claim.status));
+  const counts = {
+    blockingGaps: report.blockingGapCount,
+    advisoryGaps: report.advisoryGapCount,
+    confirmedClaims: session.claims.filter((claim) => claim.status === "confirmed").length,
+    totalClaims: session.claims.length,
+  };
   return {
     title: SOP_DOCUMENT_TITLE,
     version: SOP_DOCUMENT_VERSION,
     status: session.status,
     approvedAt: session.approvedAt,
+    approvalBasis: approvalBasisFor(session.status, counts),
+    governanceSummary: (sections.find((section) => section.field === "governance")?.items ?? [])
+      .filter((item) => !item.isUnresolved && item.text !== null)
+      .map((item) => item.text ?? ""),
     sections,
     legend: CLAIM_STATUSES.filter((status) => present.has(status)).map((status) => ({
       tag: PROVENANCE_TAGS[status],
       meaning: PROVENANCE_MEANINGS[status],
     })),
-    counts: {
-      blockingGaps: report.blockingGapCount,
-      advisoryGaps: report.advisoryGapCount,
-      confirmedClaims: session.claims.filter((claim) => claim.status === "confirmed").length,
-      totalClaims: session.claims.length,
-    },
+    counts,
   };
 }

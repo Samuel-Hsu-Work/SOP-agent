@@ -18,6 +18,14 @@ export function SopPreview({ session }: { session: SopSession }) {
       </header>
       <div className="preview-body">
         <h3 className="document-title">{document.title}</h3>
+        {document.approvalBasis === null ? null : (
+          <p className="approval-basis">{document.approvalBasis}</p>
+        )}
+        {document.governanceSummary.length === 0 ? null : (
+          <p className="approval-basis">
+            <strong>Governance:</strong> {document.governanceSummary.join(" ")}
+          </p>
+        )}
 
         {document.legend.length === 0 ? null : (
           <dl className="legend-list">

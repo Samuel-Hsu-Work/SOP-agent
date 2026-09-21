@@ -32,6 +32,11 @@ function occurrences(text: string, part: string): number {
   return text.split(part).length - 1;
 }
 
+function sessionAndMessage() {
+  const context = createDeterministicContext();
+  return createSessionWithUserMessage(context);
+}
+
 function sessionWithClaims(claims: Claim[]): SopSession {
   const context = createDeterministicContext();
   const { session } = createSessionWithUserMessage(context);
@@ -50,6 +55,30 @@ describe("renderSopPdf", () => {
     expect(text).toContain("Approved at: 2026-01-01 00:00 UTC");
     expect(text).toContain(`Claims: ${document.counts.confirmedClaims} confirmed of`);
     expect(text).toContain("Gaps: 0 blocking gaps, 5 advisory gaps");
+  });
+
+  it("says what the approval means and repeats the governance items in the document control", async () => {
+    const { session } = sessionAndMessage();
+    const document = asApprovedDocument({
+      ...session,
+      claims: [
+        buildClaim({
+          claimId: "owner",
+          field: "governance",
+          value: { kind: "statement", text: "The Support Lead reviews it every six months." },
+          source: {
+            type: "employee_statement",
+            reference: { kind: "message", messageId: "message-1" },
+          },
+        }),
+      ],
+    });
+    const { pages } = await renderToText(document);
+    const firstPage = collapseWhitespace(pages[0] ?? "");
+    expect(firstPage).toContain(
+      "Approved by the person interviewed. No claim was individually confirmed",
+    );
+    expect(firstPage).toContain("Governance: The Support Lead reviews it every six months.");
   });
 
   it("refuses a document that is not approved", async () => {

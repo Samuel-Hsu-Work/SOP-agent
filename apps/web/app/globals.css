@@ -571,6 +571,12 @@ button.link {
   font-size: 1.15rem;
 }
 
+.approval-basis {
+  margin: 0;
+  font-size: 0.85rem;
+  color: var(--muted);
+}
+
 .legend-list {
   display: grid;
   gap: 4px;
