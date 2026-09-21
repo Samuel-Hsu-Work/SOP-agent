@@ -3,6 +3,7 @@ import {
   buildClaimsView,
   type ClaimVersionView,
   type ClaimView,
+  type ConflictPairView,
   type FieldClaimsView,
 } from "../lib/claimsView.ts";
 
@@ -19,7 +20,7 @@ function statusOf(field: FieldClaimsView): { label: string; className: string } 
 
 function detailOf(field: FieldClaimsView): string {
   if (field.state === "empty") return "Nothing recorded yet";
-  const count = field.claims.length;
+  const count = field.claimCount;
   const claims = `${count} ${count === 1 ? "claim" : "claims"}`;
   return field.state === "unresolved" ? `${claims}, some unresolved` : claims;
 }
@@ -37,6 +38,19 @@ function VersionText({ version }: { version: ClaimVersionView }) {
         {version.changeNote === null ? "" : `, ${version.changeNote}`})
       </span>
     </>
+  );
+}
+
+/** Where a claim from a document came from, so a person can check it against the source. */
+function Citation({ claim }: { claim: ClaimView }) {
+  if (claim.citation === null) return null;
+  return (
+    <figure className="citation">
+      <blockquote>{claim.citation.quote}</blockquote>
+      <figcaption>
+        {claim.citation.documentName} · {claim.citation.location}
+      </figcaption>
+    </figure>
   );
 }
 
@@ -78,6 +92,7 @@ function ClaimItem({ claim, isLocked, onConfirm, onReject, onDescribeChange }: C
         {claim.effectiveDate === null ? null : <span>Effective {claim.effectiveDate}</span>}
         {claim.note === null ? null : <span className="claim-note">{claim.note}</span>}
       </div>
+      <Citation claim={claim} />
       <div className="claim-actions">
         {claim.canConfirm ? (
           <button
@@ -104,6 +119,43 @@ function ClaimItem({ claim, isLocked, onConfirm, onReject, onDescribeChange }: C
         </button>
       </div>
       <PreviousVersions versions={claim.previousVersions} />
+    </li>
+  );
+}
+
+/**
+ * Two claims that disagree, side by side. There are no confirm or reject buttons: which side is
+ * right is for the user to say in chat, and their answer replaces both.
+ */
+function ConflictPair({
+  pair,
+  isLocked,
+  onDescribeChange,
+}: {
+  pair: ConflictPairView;
+  isLocked: boolean;
+  onDescribeChange: () => void;
+}) {
+  return (
+    <li className="conflict">
+      <p className="conflict-title">
+        These two disagree. Tell the assistant the final answer in chat.
+      </p>
+      <div className="conflict-sides">
+        {pair.sides.map((side) => (
+          <div key={side.claimId} className="conflict-side">
+            <p className="conflict-source">{side.sourceLabel}</p>
+            <p className="claim-text">{side.text}</p>
+            {side.effectiveDate === null ? null : (
+              <p className="claim-note">Effective {side.effectiveDate}</p>
+            )}
+            <Citation claim={side} />
+          </div>
+        ))}
+      </div>
+      <button type="button" className="small link" disabled={isLocked} onClick={onDescribeChange}>
+        Answer in chat
+      </button>
     </li>
   );
 }
@@ -173,7 +225,10 @@ export function ReadinessPanel(props: ReadinessPanelProps) {
       <ul className="field-list">
         {fields.map((field) => {
           const status = statusOf(field);
-          const hasDetails = field.claims.length > 0 || field.removedClaims.length > 0;
+          const hasDetails =
+            field.claims.length > 0 ||
+            field.conflictPairs.length > 0 ||
+            field.removedClaims.length > 0;
           const heading = (
             <>
               <div>
@@ -189,8 +244,16 @@ export function ReadinessPanel(props: ReadinessPanelProps) {
                 <details>
                   <summary className="field-row">{heading}</summary>
                   <div className="field-claims">
-                    {field.claims.length === 0 ? null : (
+                    {field.claims.length === 0 && field.conflictPairs.length === 0 ? null : (
                       <ul className="claim-list">
+                        {field.conflictPairs.map((pair) => (
+                          <ConflictPair
+                            key={pair.sides[0].claimId}
+                            pair={pair}
+                            isLocked={isLocked}
+                            onDescribeChange={onDescribeChange}
+                          />
+                        ))}
                         {field.claims.map((claim) => (
                           <ClaimItem
                             key={claim.claimId}

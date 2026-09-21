@@ -3,6 +3,7 @@ import {
   type ClaimHistoryEntry,
   type ClaimStatus,
   computeGaps,
+  type DocumentCitation,
   type FieldClass,
   type FieldGap,
   type FieldState,
@@ -28,6 +29,8 @@ const HISTORY_REASON_LABELS: Record<HistoryReason, string> = {
   withdrawn: "Removed",
   confirmed: "Confirmed",
   rejected: "Rejected",
+  conflict_detected: "Conflict found",
+  conflict_resolved: "Resolved by your answer",
 };
 
 /** An earlier version of a claim, as shown under the claim that replaced it or in the removed list. */
@@ -55,6 +58,10 @@ export interface ClaimView {
   text: string | null;
   note: string | null;
   effectiveDate: string | null;
+  /** The document and quote behind a claim read from a document. Null for anything said in the interview. */
+  citation: DocumentCitation | null;
+  /** Who this claim came from, in the words a person uses: the user, the assistant, or a document. */
+  sourceLabel: string;
   /** What the review panel offers for this claim. Read from the same predicate as the write path. */
   canConfirm: boolean;
   canReject: boolean;
@@ -62,6 +69,11 @@ export interface ClaimView {
   rejectLabel: string;
   /** Earlier versions of this claim, newest first. */
   previousVersions: ClaimVersionView[];
+}
+
+/** Two claims that disagree, shown together, once, and read-only: only the user's answer in chat resolves them. */
+export interface ConflictPairView {
+  sides: [ClaimView, ClaimView];
 }
 
 export interface FieldClaimsView {
@@ -72,7 +84,11 @@ export interface FieldClaimsView {
   gap: FieldGap | null;
   /** An advisory gap that the approver has acknowledged. Always false for a blocking one. */
   isGapAcknowledged: boolean;
+  /** The claims of the field, without the ones that are half of a conflict pair. */
   claims: ClaimView[];
+  conflictPairs: ConflictPairView[];
+  /** Every active claim in the field, including both halves of each conflict. */
+  claimCount: number;
   /**
    * True when the field has claims and every one is the agent's own suggestion. Such a field has no
    * gap, by the scope rules, but nobody has stated it, so the panel must not call it complete.
@@ -93,6 +109,19 @@ function toVersionView(entry: ClaimHistoryEntry): ClaimVersionView {
     changeNote: entry.changeNote,
     changedAt: entry.changedAt,
   };
+}
+
+function sourceLabelFor(claim: Claim): string {
+  switch (claim.source.type) {
+    case "employee_statement":
+      return "What you said";
+    case "agent_suggestion":
+      return "The assistant's suggestion";
+    case "policy_document":
+      return claim.source.reference.kind === "document"
+        ? `From ${claim.source.reference.citation.documentName}`
+        : "An uploaded document";
+  }
 }
 
 function newestFirst(entries: readonly ClaimHistoryEntry[]): ClaimHistoryEntry[] {
@@ -122,6 +151,38 @@ export function buildClaimsView(session: SopSession): FieldClaimsView[] {
 
   return computeGaps(session).fields.map((readiness) => {
     const claims = orderClaims(session.claims.filter((claim) => claim.field === readiness.field));
+    const toClaimView = (claim: Claim): ClaimView => ({
+      claimId: claim.claimId,
+      stepNumber: stepNumbers.get(claim.claimId) ?? null,
+      status: claim.status,
+      statusLabel: STATUS_LABELS[claim.status],
+      text: claim.value?.text ?? null,
+      note: claim.note,
+      effectiveDate: claim.effectiveDate,
+      citation: claim.source.reference.kind === "document" ? claim.source.reference.citation : null,
+      sourceLabel: sourceLabelFor(claim),
+      ...reviewActionsFor(claim),
+      rejectLabel: claim.status === "confirmed" ? "Withdraw confirmation" : "Reject",
+      previousVersions: newestFirst(
+        session.claimHistory.filter(
+          (entry) =>
+            entry.previousClaim.field === readiness.field && entry.claimId === claim.claimId,
+        ),
+      ).map(toVersionView),
+    });
+
+    // A conflict is shown once, as a pair, and never as two unrelated claims.
+    const pairedIds = new Set<string>();
+    const conflictPairs: ConflictPairView[] = [];
+    for (const claim of claims) {
+      if (pairedIds.has(claim.claimId) || claim.conflictsWithClaimId === null) continue;
+      const partner = claims.find((other) => other.claimId === claim.conflictsWithClaimId);
+      if (partner === undefined) continue;
+      pairedIds.add(claim.claimId);
+      pairedIds.add(partner.claimId);
+      conflictPairs.push({ sides: [toClaimView(claim), toClaimView(partner)] });
+    }
+    const unpairedClaims = claims.filter((claim) => !pairedIds.has(claim.claimId));
     const fieldHistory = session.claimHistory.filter(
       (entry) => entry.previousClaim.field === readiness.field,
     );
@@ -135,22 +196,9 @@ export function buildClaimsView(session: SopSession): FieldClaimsView[] {
       isGapAcknowledged:
         readiness.gap?.severity === "advisory" && acknowledgedFields.has(readiness.field),
       isSuggestionOnly: claims.length > 0 && claims.every((claim) => claim.status === "proposed"),
-      claims: claims.map((claim): ClaimView => {
-        return {
-          claimId: claim.claimId,
-          stepNumber: stepNumbers.get(claim.claimId) ?? null,
-          status: claim.status,
-          statusLabel: STATUS_LABELS[claim.status],
-          text: claim.value?.text ?? null,
-          note: claim.note,
-          effectiveDate: claim.effectiveDate,
-          ...reviewActionsFor(claim),
-          rejectLabel: claim.status === "confirmed" ? "Withdraw confirmation" : "Reject",
-          previousVersions: newestFirst(
-            fieldHistory.filter((entry) => entry.claimId === claim.claimId),
-          ).map(toVersionView),
-        };
-      }),
+      claims: unpairedClaims.map(toClaimView),
+      conflictPairs,
+      claimCount: claims.length,
       removedClaims: newestFirst(fieldHistory.filter((entry) => !activeIds.has(entry.claimId))).map(
         toVersionView,
       ),

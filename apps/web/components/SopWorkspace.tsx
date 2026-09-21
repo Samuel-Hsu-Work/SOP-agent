@@ -8,6 +8,7 @@ import { ApprovalPanel } from "./ApprovalPanel.tsx";
 import { ChatPanel } from "./ChatPanel.tsx";
 import { ReadinessPanel } from "./ReadinessPanel.tsx";
 import { SopPreview } from "./SopPreview.tsx";
+import { UploadPanel } from "./UploadPanel.tsx";
 
 type SideView = "review" | "preview";
 
@@ -28,6 +29,9 @@ export function SopWorkspace() {
     downloadPdf,
     isDownloading,
     downloadError,
+    uploadDocument,
+    isUploading,
+    uploadReport,
   } = useSopSession();
   useLeavePageWarning(session !== null && wouldLoseWork(session, isSending));
   const [sideView, setSideView] = useState<SideView>("review");
@@ -61,6 +65,7 @@ export function SopWorkspace() {
             pendingMessage={pendingMessage}
             streamingReply={streamingReply}
             isSending={isSending}
+            isUploading={isUploading}
             error={error}
             notice={notice}
             onSend={sendMessage}
@@ -99,16 +104,24 @@ export function SopWorkspace() {
             >
               {sideView === "review" ? (
                 <>
+                  {session.status === "approved" ? null : (
+                    <UploadPanel
+                      isDisabled={isSending}
+                      isUploading={isUploading}
+                      report={uploadReport}
+                      onUpload={uploadDocument}
+                    />
+                  )}
                   <ReadinessPanel
                     session={session}
-                    isBusy={isSending}
+                    isBusy={isSending || isUploading}
                     onConfirm={confirmClaim}
                     onReject={rejectClaim}
                     onDescribeChange={describeChangeInChat}
                   />
                   <ApprovalPanel
                     session={session}
-                    isBusy={isSending}
+                    isBusy={isSending || isUploading}
                     onAcknowledge={setAcknowledged}
                     onApprove={approve}
                     isDownloading={isDownloading}

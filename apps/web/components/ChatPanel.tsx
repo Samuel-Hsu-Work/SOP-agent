@@ -16,6 +16,8 @@ export interface ChatPanelProps {
   pendingMessage: string | null;
   streamingReply: string;
   isSending: boolean;
+  /** A document is being read. The session is about to change, so a message would race it. */
+  isUploading?: boolean;
   error: string | null;
   notice: string | null;
   onSend: (message: string) => Promise<SendResult>;
@@ -24,8 +26,17 @@ export interface ChatPanelProps {
 }
 
 export function ChatPanel(props: ChatPanelProps) {
-  const { session, pendingMessage, streamingReply, isSending, error, notice, onSend, composerRef } =
-    props;
+  const {
+    session,
+    pendingMessage,
+    streamingReply,
+    isSending,
+    isUploading = false,
+    error,
+    notice,
+    onSend,
+    composerRef,
+  } = props;
   const [draft, setDraft] = useState("");
   const endOfTranscript = useRef<HTMLDivElement | null>(null);
   const isReadOnly = session.status === "approved";
@@ -37,7 +48,7 @@ export function ChatPanel(props: ChatPanelProps) {
 
   async function submit() {
     const message = draft.trim();
-    if (message.length === 0 || isSending || isReadOnly) return;
+    if (message.length === 0 || isSending || isUploading || isReadOnly) return;
     setDraft("");
     const result = await onSend(message);
     // A failed turn changes nothing, so the user's words go back into the box. A cancelled one
@@ -111,9 +122,12 @@ export function ChatPanel(props: ChatPanelProps) {
           onKeyDown={handleKeyDown}
           placeholder="Type your answer. Shift+Enter starts a new line."
           rows={3}
-          disabled={isSending || isReadOnly}
+          disabled={isSending || isUploading || isReadOnly}
         />
-        <button type="submit" disabled={isSending || isReadOnly || draft.trim().length === 0}>
+        <button
+          type="submit"
+          disabled={isSending || isUploading || isReadOnly || draft.trim().length === 0}
+        >
           {isSending ? "Sending…" : "Send"}
         </button>
       </form>

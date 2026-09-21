@@ -343,7 +343,8 @@ summary.field-row:focus-visible {
   color: var(--blocking);
 }
 
-.claim-status-proposed {
+.claim-status-proposed,
+.claim-status-extracted {
   color: var(--advisory);
 }
 
@@ -659,4 +660,86 @@ button.link {
 .item-source {
   color: var(--muted);
   font-size: 0.8rem;
+}
+
+.upload-body {
+  display: grid;
+  gap: 10px;
+  padding: 12px 16px 16px;
+}
+
+.upload-help {
+  margin: 0;
+  color: var(--muted);
+  font-size: 0.85rem;
+}
+
+.upload-report {
+  margin: 0;
+  font-size: 0.9rem;
+}
+
+.upload-error {
+  color: var(--blocking);
+}
+
+.citation {
+  margin: 6px 0 0;
+  padding: 6px 10px;
+  border-left: 3px solid var(--line);
+  font-size: 0.85rem;
+}
+
+.citation blockquote,
+.item-quote {
+  margin: 0;
+  font-style: italic;
+  overflow-wrap: anywhere;
+}
+
+.citation figcaption {
+  margin-top: 2px;
+  color: var(--muted);
+  font-size: 0.8rem;
+  overflow-wrap: anywhere;
+}
+
+.item-quote {
+  margin: 2px 0 0 14px;
+  color: var(--muted);
+  font-size: 0.82rem;
+}
+
+.conflict {
+  display: grid;
+  gap: 8px;
+  padding: 10px 12px;
+  border: 1px solid var(--blocking);
+  border-radius: 4px;
+  list-style: none;
+}
+
+.conflict-title {
+  margin: 0;
+  color: var(--blocking);
+  font-size: 0.85rem;
+  font-weight: 600;
+}
+
+.conflict-sides {
+  display: grid;
+  gap: 10px;
+  grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+}
+
+.conflict-side {
+  min-width: 0;
+}
+
+.conflict-source {
+  margin: 0 0 2px;
+  color: var(--muted);
+  font-size: 0.78rem;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
 }

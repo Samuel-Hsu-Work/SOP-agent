@@ -56,6 +56,9 @@ export function SopPreview({ session }: { session: SopSession }) {
                       <span>{item.text}</span>
                     )}
                     <span className="item-source"> {item.sourceLine}</span>
+                    {item.citation === null ? null : (
+                      <blockquote className="item-quote">{item.citation.quote}</blockquote>
+                    )}
                   </li>
                 ))}
               </ol>

@@ -4,6 +4,9 @@ import {
   type AdvisoryFieldName,
   applyClaim,
   approveSession,
+  type ClaimDraft,
+  MAX_EXTRACTED_CLAIMS_PER_DOCUMENT,
+  MAX_SESSION_TRANSPORT_BYTES,
   markSopDownloaded,
   type SopSession,
   setAdvisoryAcknowledgement,
@@ -13,6 +16,7 @@ import {
 import { useCallback, useEffect, useRef, useState } from "react";
 import { runChatTurn } from "./chatTurn.ts";
 import { requestSopPdf } from "./downloadSopPdf.ts";
+import { checkFileBeforeUpload, requestDocumentExtraction } from "./extractDocument.ts";
 import { saveBlobAsFile } from "./saveBlobAsFile.ts";
 import { loadSession, saveSession, startFreshSession } from "./sessionStore.ts";
 
@@ -29,6 +33,69 @@ const STORAGE_FAILURE_MESSAGE =
  */
 export interface SendResult {
   outcome: "committed" | "failed" | "cancelled";
+}
+
+/** What became of an upload, in words for the person who made it. `info` is a result, `error` is a refusal. */
+export interface UploadReport {
+  kind: "info" | "error";
+  message: string;
+}
+
+/** How many bytes a session weighs when it is sent, which is what the API's body limit counts. */
+function transportSize(session: SopSession): number {
+  return new TextEncoder().encode(JSON.stringify(session)).length;
+}
+
+function plural(count: number, singular: string, pluralForm: string): string {
+  return count === 1 ? singular : pluralForm;
+}
+
+/**
+ * Writes the drafts a document produced into a copy of the session, one at a time, through
+ * `applyClaim`. All or nothing: if any draft is refused (the session is full) or the result could
+ * no longer be sent to the API, the caller keeps the session it had.
+ */
+function writeDrafts(
+  session: SopSession,
+  drafts: readonly ClaimDraft[],
+):
+  | { ok: true; session: SopSession; added: number; alreadyThere: number }
+  | { ok: false; message: string } {
+  let working = session;
+  let added = 0;
+  let alreadyThere = 0;
+  for (const [index, draft] of drafts.entries()) {
+    const result = applyClaim(
+      working,
+      {
+        kind: "ingestExtracted",
+        createdByType: "extraction",
+        field: draft.field,
+        statement: draft.statement,
+        citation: draft.citation,
+        effectiveDate: draft.effectiveDate,
+        note: null,
+      },
+      systemWriteContext,
+    );
+    if (!result.ok) {
+      return {
+        ok: false,
+        message: `Only ${index} of ${drafts.length} rules fit in this SOP, so none were added. Remove something or start a new chat.`,
+      };
+    }
+    working = result.session;
+    if (result.change === "created") added += 1;
+    else alreadyThere += 1;
+  }
+  if (transportSize(working) > MAX_SESSION_TRANSPORT_BYTES) {
+    return {
+      ok: false,
+      message:
+        "Adding these rules would make the SOP too large to keep working on, so none were added.",
+    };
+  }
+  return { ok: true, session: working, added, alreadyThere };
 }
 
 /** A local change to the session: the new session, or a sentence saying why it was refused. */
@@ -49,8 +116,11 @@ export function useSopSession() {
   const [isSending, setIsSending] = useState(false);
   const [isDownloading, setIsDownloading] = useState(false);
   const [downloadError, setDownloadError] = useState<string | null>(null);
+  const [isUploading, setIsUploading] = useState(false);
+  const [uploadReport, setUploadReport] = useState<UploadReport | null>(null);
   const activeTurn = useRef<AbortController | null>(null);
   const activeDownload = useRef<AbortController | null>(null);
+  const activeUpload = useRef<AbortController | null>(null);
   // The latest session and whether a turn is in flight, readable from any callback without waiting
   // for a render. A review click and a chat commit both build on the session as it is now, so
   // neither can overwrite the other with an older copy.
@@ -84,6 +154,7 @@ export function useSopSession() {
     () => () => {
       activeTurn.current?.abort();
       activeDownload.current?.abort();
+      activeUpload.current?.abort();
     },
     [],
   );
@@ -91,7 +162,9 @@ export function useSopSession() {
   const sendMessage = useCallback(
     async (message: string): Promise<SendResult> => {
       const current = sessionRef.current;
-      if (current === null || isSendingRef.current) return { outcome: "cancelled" };
+      if (current === null || isSendingRef.current || activeUpload.current !== null) {
+        return { outcome: "cancelled" };
+      }
 
       const controller = new AbortController();
       activeTurn.current = controller;
@@ -137,7 +210,7 @@ export function useSopSession() {
   const applyLocalChange = useCallback(
     (change: (current: SopSession) => LocalChange): boolean => {
       const current = sessionRef.current;
-      if (current === null || isSendingRef.current) return false;
+      if (current === null || isSendingRef.current || activeUpload.current !== null) return false;
 
       const result = change(current);
       if (!result.ok) {
@@ -247,6 +320,109 @@ export function useSopSession() {
     });
   }, [applyLocalChange]);
 
+  /**
+   * Reads a document and adds the rules in it to the SOP as claims to review. The API only reads
+   * the file and proves each quote; the claims are written here through `applyClaim`. Refused
+   * while a turn or another upload is in flight and after approval, because the rest of the page
+   * builds on the session as it is now.
+   */
+  const uploadDocument = useCallback(
+    async (file: File): Promise<void> => {
+      const current = sessionRef.current;
+      if (
+        current === null ||
+        current.status === "approved" ||
+        isSendingRef.current ||
+        activeUpload.current !== null
+      ) {
+        return;
+      }
+      const refusal = checkFileBeforeUpload(file);
+      if (refusal !== null) {
+        setUploadReport({ kind: "error", message: refusal });
+        return;
+      }
+
+      const controller = new AbortController();
+      activeUpload.current = controller;
+      setIsUploading(true);
+      setUploadReport(null);
+
+      const result = await requestDocumentExtraction({
+        apiBaseUrl: API_BASE_URL,
+        file,
+        signal: controller.signal,
+      });
+
+      // New chat cancelled this upload: leave the state alone.
+      if (controller.signal.aborted) return;
+      activeUpload.current = null;
+      setIsUploading(false);
+
+      if (result.kind === "failed") {
+        setUploadReport({ kind: "error", message: result.message });
+        return;
+      }
+      const { response } = result;
+      const { fileName } = response.document;
+      if (response.claims.length === 0) {
+        const dropped = response.rejected.count;
+        setUploadReport({
+          kind: "info",
+          message:
+            dropped === 0
+              ? `No SOP rules were found in ${fileName}.`
+              : `No rules from ${fileName} could be used: ${dropped} could not be verified against the text.`,
+        });
+        return;
+      }
+
+      // Nothing else can have changed the session while the upload was running.
+      const latest = sessionRef.current;
+      if (latest === null) return;
+      const written = writeDrafts(latest, response.claims);
+      if (!written.ok) {
+        setUploadReport({ kind: "error", message: written.message });
+        return;
+      }
+      const conflictsBefore = latest.claims.filter((claim) => claim.status === "conflict").length;
+      const conflictsAfter = written.session.claims.filter(
+        (claim) => claim.status === "conflict",
+      ).length;
+      replaceSession(written.session);
+      setError(saveSession(written.session) ? null : STORAGE_FAILURE_MESSAGE);
+
+      const parts = [
+        `Read ${fileName}: ${written.added} ${plural(written.added, "rule", "rules")} to review.`,
+      ];
+      if (written.alreadyThere > 0)
+        parts.push(`${written.alreadyThere} already there or rejected earlier.`);
+      const repeated = response.rejected.reasons.duplicate ?? 0;
+      const unverified = response.rejected.count - repeated;
+      if (unverified > 0) {
+        parts.push(
+          `${unverified} ${plural(unverified, "rule was", "rules were")} dropped because ${plural(unverified, "it", "they")} could not be verified against the text.`,
+        );
+      }
+      if (repeated > 0) {
+        parts.push(`${repeated} repeated ${plural(repeated, "rule was", "rules were")} dropped.`);
+      }
+      if (response.truncatedCount > 0) {
+        parts.push(
+          `${response.truncatedCount} more ${plural(response.truncatedCount, "rule was", "rules were")} left out because one document can add at most ${MAX_EXTRACTED_CLAIMS_PER_DOCUMENT}.`,
+        );
+      }
+      const newConflicts = (conflictsAfter - conflictsBefore) / 2;
+      if (newConflicts > 0) {
+        parts.push(
+          `${newConflicts} ${plural(newConflicts, "conflict", "conflicts")} found: tell the assistant the final answer in chat.`,
+        );
+      }
+      setUploadReport({ kind: "info", message: parts.join(" ") });
+    },
+    [replaceSession],
+  );
+
   /** One click, no confirmation: cancel any turn in flight and start from an empty session. */
   const startNewChat = useCallback(() => {
     activeTurn.current?.abort();
@@ -255,6 +431,10 @@ export function useSopSession() {
     activeDownload.current = null;
     setIsDownloading(false);
     setDownloadError(null);
+    activeUpload.current?.abort();
+    activeUpload.current = null;
+    setIsUploading(false);
+    setUploadReport(null);
     markSending(false);
     setPendingMessage(null);
     setStreamingReply("");
@@ -280,5 +460,8 @@ export function useSopSession() {
     downloadPdf,
     isDownloading,
     downloadError,
+    uploadDocument,
+    isUploading,
+    uploadReport,
   };
 }

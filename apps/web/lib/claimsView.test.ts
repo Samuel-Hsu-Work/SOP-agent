@@ -363,3 +363,99 @@ describe("buildClaimsView acknowledgement", () => {
     expect(viewOf(forced, "purpose").isGapAcknowledged).toBe(false);
   });
 });
+
+describe("buildClaimsView with documents", () => {
+  const POLICY =
+    "Vendor payments above $10,000 require written approval from the budget owner and the CFO.";
+  const CITATION = {
+    documentName: "vendor-payment-policy.md",
+    location: "§ Approval authority",
+    quote: "Every vendor payment above $10,000 requires the written approval of two people.",
+  };
+
+  function withConflict() {
+    const { session, apply, record } = setup();
+    const ingested = apply(session, {
+      kind: "ingestExtracted",
+      createdByType: "extraction",
+      field: "authorization",
+      statement: POLICY,
+      citation: CITATION,
+      effectiveDate: null,
+      note: null,
+      sourceMessageId: undefined,
+    } as never);
+    const spoken = record(
+      ingested.session,
+      "authorization",
+      "Payments up to $25,000 need only the Finance Director.",
+    );
+    return { session: spoken.session, ingested: ingested.claim, spoken: spoken.claim, apply };
+  }
+
+  it("gives an extracted claim its citation and the review actions of a document claim", () => {
+    const { session, apply } = setup();
+    const result = apply(session, {
+      kind: "ingestExtracted",
+      createdByType: "extraction",
+      field: "scope",
+      statement: "Applies to online orders.",
+      citation: CITATION,
+      effectiveDate: null,
+      note: null,
+    } as never);
+    const claim = viewOf(result.session, "scope").claims[0];
+    expect(claim).toMatchObject({
+      status: "extracted",
+      statusLabel: "Extracted from a document",
+      citation: CITATION,
+      canConfirm: true,
+      canReject: true,
+    });
+  });
+
+  it("shows two claims in conflict once, as a pair, and never as separate claims", () => {
+    const { session, ingested, spoken } = withConflict();
+    const view = viewOf(session, "authorization");
+
+    expect(view.claims).toEqual([]);
+    expect(view.claimCount).toBe(2);
+    expect(view.conflictPairs).toHaveLength(1);
+    const ids = view.conflictPairs[0]?.sides.map((side) => side.claimId).sort();
+    expect(ids).toEqual([ingested.claimId, spoken.claimId].sort());
+    // Neither side can be confirmed or rejected: only the user's answer in chat resolves it.
+    for (const side of view.conflictPairs[0]?.sides ?? []) {
+      expect(side).toMatchObject({ status: "conflict", canConfirm: false, canReject: false });
+    }
+    const documentSide = view.conflictPairs[0]?.sides.find((side) => side.citation !== null);
+    expect(documentSide?.citation).toEqual(CITATION);
+    expect(documentSide?.sourceLabel).toBe(`From ${CITATION.documentName}`);
+    expect(
+      view.conflictPairs[0]?.sides.find((side) => side.claimId === spoken.claimId)?.sourceLabel,
+    ).toBe("What you said");
+  });
+
+  it("puts both sides in the removed list, with a label, once the user has answered", () => {
+    const { session, spoken, apply } = withConflict();
+    const messageId = session.messages[0]?.id ?? "";
+    const resolved = apply(session, {
+      kind: "resolveConflict",
+      createdByType: "agent",
+      claimId: spoken.claimId,
+      statement: "The Finance Director up to $25,000, the CFO above.",
+      note: null,
+      effectiveDate: null,
+      sourceMessageId: messageId,
+    });
+    const view = viewOf(resolved.session, "authorization");
+    expect(view.conflictPairs).toEqual([]);
+    expect(view.claims).toHaveLength(1);
+    // Newest first: the two resolutions, then the two times the conflict was found.
+    expect(view.removedClaims.map((removed) => removed.reasonLabel)).toEqual([
+      "Resolved by your answer",
+      "Resolved by your answer",
+      "Conflict found",
+      "Conflict found",
+    ]);
+  });
+});
