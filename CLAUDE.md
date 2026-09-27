@@ -4,6 +4,8 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 Check [TODO.md](./TODO.md) at the start of a session for current work-in-progress status and next steps — it's the mutable counterpart to this file's static architecture notes.
 
+Architecture diagram: https://claude.ai/artifact/9Lh4yHYVHKBvxJ5aZ2tDbp
+
 ## What this is
 
 A take-home project: an AI agent that interviews a person about a business process, finds the gaps they didn't mention, and produces an SOP (Standard Operating Procedure) that the user reviews, approves, and downloads as a PDF. The AI agent's behavior is what matters; the surrounding web app is deliberately minimal (one page, chat UI, no login, one hard-coded company and user, runs locally).
