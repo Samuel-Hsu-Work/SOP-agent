@@ -57,13 +57,17 @@ export function SopPreview({ session }: { session: SopSession }) {
                     className={item.isUnresolved ? "document-item open-item" : "document-item"}
                     value={item.position ?? undefined}
                   >
-                    <span className={`tag-chip tag-${item.status}`}>{item.provenanceTag}</span>{" "}
-                    {item.text === null ? (
-                      <em>Open item: {item.note ?? "not known"}</em>
-                    ) : (
-                      <span>{item.text}</span>
-                    )}
-                    <span className="item-source"> {item.sourceLine}</span>
+                    <p className="item-meta">
+                      <span className={`tag-chip tag-${item.status}`}>{item.provenanceTag}</span>{" "}
+                      <span className="item-source">{item.sourceLine}</span>
+                    </p>
+                    <p className="item-body">
+                      {item.text === null ? (
+                        <em>Open item: {item.note ?? "not known"}</em>
+                      ) : (
+                        item.text
+                      )}
+                    </p>
                     {item.citation === null ? null : (
                       <blockquote className="item-quote">{item.citation.quote}</blockquote>
                     )}

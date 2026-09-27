@@ -86,7 +86,7 @@ describe("renderSopPdf", () => {
     await expect(renderSopPdf(draft)).rejects.toThrow("approved");
   });
 
-  it("prints every claim's text next to its own provenance tag", async () => {
+  it("prints every claim's tag and source ahead of its own text, as a small header line", async () => {
     const document = buildSopDocument(buildApprovedSession());
     const { text } = await renderToText(document);
 
@@ -95,7 +95,8 @@ describe("renderSopPdf", () => {
       for (const item of section.items) {
         expectedTagCount += 1;
         const body = item.text ?? item.note ?? "not known";
-        expect(text).toContain(`${item.provenanceTag} ${body}`);
+        expect(text).toContain(`${item.provenanceTag} ${item.sourceLine}`);
+        expect(text).toContain(body);
       }
     }
     expect(expectedTagCount).toBe(document.counts.totalClaims);
@@ -129,9 +130,9 @@ describe("renderSopPdf", () => {
     if (!result.ok) throw new Error("setup failed");
     const { text } = await renderToText(asApprovedDocument(result.session));
 
-    expect(text).toContain("[proposed] Audit the refunds monthly.");
-    expect(text).toContain("Suggested by the interviewer at the user's request.");
-    expect(text).not.toContain("suggested by the assistant, Suggested");
+    expect(text).toContain("[proposed] Suggested by the interviewer at the user's request.");
+    expect(text).toContain("Audit the refunds monthly.");
+    expect(text).not.toContain("[proposed] suggested by the assistant");
   });
 
   it("prints a legend with only the tags that appear", async () => {
@@ -184,9 +185,11 @@ describe("renderSopPdf", () => {
     };
     const { text } = await renderToText(asApprovedDocument(withConflict));
 
-    expect(text).toContain("1. [observed] Receive the request.");
+    expect(text).toContain("1. [observed] from the interview");
+    expect(text).toContain("Receive the request.");
     expect(text).toContain("Open items in this section — these are not instructions.");
-    expect(text).toContain("Step 2: [conflict] Refund within 14 days.");
+    expect(text).toContain("Step 2: [conflict] from the interview");
+    expect(text).toContain("Refund within 14 days.");
     expect(text.indexOf("1. [observed]")).toBeLessThan(text.indexOf("Open items in this section"));
   });
 
@@ -201,8 +204,9 @@ describe("renderSopPdf", () => {
     });
     const { text, rendered } = await renderToText(asApprovedDocument(sessionWithClaims([claim])));
 
+    expect(text).toContain("[observed] from the interview");
     expect(text).toContain(
-      "[observed] Refund — the customer’s “choice” … €50 • café; <U+4E2D><U+6587> <U+2192> <U+2713> <U+1F600> <U+0141>ód<U+017A>",
+      "Refund — the customer’s “choice” … €50 • café; <U+4E2D><U+6587> <U+2192> <U+2713> <U+1F600> <U+0141>ód<U+017A>",
     );
     expect(rendered.replacedCharacters).toBe(7);
     expect(text).toContain("7 characters outside this PDF's supported font set");
@@ -257,7 +261,7 @@ describe("renderSopPdf", () => {
 
     expect(rendered.pageCount).toBeGreaterThan(1);
     for (let step = 1; step <= 80; step += 1) {
-      expect(occurrences(text, `${step}. [observed] Do step ${step}. `)).toBe(1);
+      expect(occurrences(text, `${step}. [observed] from the interview Do step ${step}.`)).toBe(1);
     }
   });
 

@@ -165,18 +165,27 @@ export function renderSopPdf(document: SopDocument): Promise<RenderedSopPdf> {
         resetTextStyle();
       }
 
+      /**
+       * Each item prints as two lines: a small header naming the step, the tag and the source
+       * (metadata: how sure the reader should be, and where it came from), then the statement
+       * itself in normal size, unbroken by a tag. The header reads first and small on purpose, so
+       * the sentence a reader actually follows is never interrupted by a bracketed tag.
+       */
       const drawItem = (prepared: PreparedItem, indent: number, stepLabel: string) => {
-        ensureSpace(36);
+        ensureSpace(40);
         const x = MARGIN_SIDE + indent;
         const width = contentWidth - indent;
-        pdf.fillColor(COLOR_TEXT).fontSize(10);
+        pdf.fillColor(COLOR_MUTED).fontSize(8);
         pdf.font(FONT_BOLD).text(`${stepLabel}${prepared.item.provenanceTag} `, x, pdf.y, {
           continued: true,
           width,
         });
-        pdf.font(prepared.item.text === null ? FONT_ITALIC : FONT_REGULAR).text(prepared.body);
-        pdf.fillColor(COLOR_MUTED).font(FONT_REGULAR).fontSize(8);
-        pdf.text(prepared.sourceLine, x + ITEM_INDENT, pdf.y, { width: width - ITEM_INDENT });
+        pdf.font(FONT_REGULAR).text(prepared.sourceLine);
+        pdf.moveDown(0.15);
+        pdf.fillColor(COLOR_TEXT).fontSize(10);
+        pdf
+          .font(prepared.item.text === null ? FONT_ITALIC : FONT_REGULAR)
+          .text(prepared.body, x, pdf.y, { width });
         pdf.moveDown(0.4);
         resetTextStyle();
       };

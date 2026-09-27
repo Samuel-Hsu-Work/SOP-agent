@@ -78,7 +78,8 @@ describe("POST /sops/pdf", () => {
     const document = buildSopDocument(session);
     for (const section of document.sections) {
       for (const item of section.items) {
-        expect(text).toContain(`${item.provenanceTag} ${item.text ?? item.note}`);
+        expect(text).toContain(`${item.provenanceTag} ${item.sourceLine}`);
+        expect(text).toContain(item.text ?? item.note ?? "");
       }
     }
   });

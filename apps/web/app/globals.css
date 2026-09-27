@@ -644,9 +644,27 @@ button.link {
   padding-left: 0;
 }
 
+/*
+ * Each item prints as a small metadata line (which step, how sure of it, where it came from),
+ * then the statement itself on its own line. The metadata reads first and stays out of the way of
+ * the sentence, so the sentence is never interrupted by a bracketed tag mid-line.
+ */
+.item-meta {
+  margin: 0 0 2px;
+  display: flex;
+  align-items: baseline;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.item-body {
+  margin: 0;
+}
+
 .tag-chip {
   font-family: var(--mono);
   font-size: 0.75rem;
+  font-weight: 600;
   color: var(--muted);
 }
 
