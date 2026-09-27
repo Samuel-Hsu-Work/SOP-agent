@@ -131,6 +131,33 @@ function sourceLineFor(claim: Claim): string {
 }
 
 /**
+ * Pulls each conflict claim's partner to sit immediately after it, so the pair prints adjacent
+ * instead of separated by an unrelated open item. Walks the original order and, for every claim
+ * not yet placed, emits it and then its unplaced partner (if any); every other claim keeps its
+ * original relative position. Never called for "procedure": a step keeps its slot even while
+ * unresolved (`stepPositions` covers every active claim in `procedureOrder`, not only resolved
+ * ones), and the preview prints every field's items as one flat, position-labelled list with no
+ * resolved/open split — pulling a later step's conflict partner forward past an earlier step would
+ * make the printed step numbers run out of order (Codex review finding).
+ */
+function withConflictPairsAdjacent(claims: Claim[]): Claim[] {
+  const byId = new Map(claims.map((claim) => [claim.claimId, claim]));
+  const placed = new Set<string>();
+  const result: Claim[] = [];
+  for (const claim of claims) {
+    if (placed.has(claim.claimId)) continue;
+    result.push(claim);
+    placed.add(claim.claimId);
+    if (claim.conflictsWithClaimId === null) continue;
+    const partner = byId.get(claim.conflictsWithClaimId);
+    if (partner === undefined || placed.has(partner.claimId)) continue;
+    result.push(partner);
+    placed.add(partner.claimId);
+  }
+  return result;
+}
+
+/**
  * Turns the claims into the document that the on-screen preview shows and that slice 4's PDF will
  * print. Pure and clock-free, so it renders the same every time, and the preview and the PDF
  * cannot disagree about order or tags. Every active claim is printed, suggestions and unknowns
@@ -155,6 +182,7 @@ export function buildSopDocument(session: SopSession): SopDocument {
 
     const fieldClaims = session.claims.filter((claim) => claim.field === definition.name);
     // A procedure reads in step order. A whole-procedure unknown has no slot, so it goes last.
+    // Step order always wins here, even over conflict-pair adjacency (see withConflictPairsAdjacent).
     const ordered =
       definition.name === "procedure"
         ? [
@@ -164,7 +192,7 @@ export function buildSopDocument(session: SopSession): SopDocument {
             }),
             ...fieldClaims.filter((claim) => !stepPositions.has(claim.claimId)),
           ]
-        : fieldClaims;
+        : withConflictPairsAdjacent(fieldClaims);
 
     return {
       field: definition.name,

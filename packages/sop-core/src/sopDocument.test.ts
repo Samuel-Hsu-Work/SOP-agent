@@ -167,6 +167,67 @@ describe("buildSopDocument", () => {
     );
   });
 
+  it("keeps a conflict pair adjacent, even when an unrelated claim sits between them", () => {
+    const { session } = setup();
+    const claimA = buildClaim({
+      claimId: "a",
+      field: "controls",
+      status: "conflict",
+      conflictsWithClaimId: "c",
+    });
+    const unrelated = buildClaim({
+      claimId: "b",
+      field: "controls",
+      status: "extracted",
+    });
+    const claimC = buildClaim({
+      claimId: "c",
+      field: "controls",
+      status: "conflict",
+      conflictsWithClaimId: "a",
+    });
+    const document = buildSopDocument({ ...session, claims: [claimA, unrelated, claimC] });
+    expect(sectionOf(document, "controls").items.map((item) => item.claimId)).toEqual([
+      "a",
+      "c",
+      "b",
+    ]);
+  });
+
+  it("never reorders procedure steps for conflict-pair adjacency, even at the cost of the pair being split", () => {
+    const { session } = setup();
+    const stepA = buildClaim({
+      claimId: "step-a",
+      field: "procedure",
+      status: "conflict",
+      conflictsWithClaimId: "step-c",
+      value: { kind: "step", text: "Step one." },
+    });
+    const stepB = buildClaim({
+      claimId: "step-b",
+      field: "procedure",
+      value: { kind: "step", text: "Step two." },
+    });
+    const stepC = buildClaim({
+      claimId: "step-c",
+      field: "procedure",
+      status: "conflict",
+      conflictsWithClaimId: "step-a",
+      value: { kind: "step", text: "Step three." },
+    });
+    const withSteps: SopSession = {
+      ...session,
+      claims: [stepA, stepB, stepC],
+      procedureOrder: ["step-a", "step-b", "step-c"],
+    };
+    const items = sectionOf(buildSopDocument(withSteps), "procedure").items;
+    expect(items.map((item) => [item.position, item.claimId])).toEqual([
+      [1, "step-a"],
+      [2, "step-b"],
+      [3, "step-c"],
+    ]);
+  });
+
   it("includes suggestions and shows an unknown as an open item with its note and no text", () => {
     const { session, record, apply, messageId } = setup();
     const suggested = record(session, "controls", "Audit monthly.", "proposed").session;
