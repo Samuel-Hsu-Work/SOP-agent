@@ -7,10 +7,11 @@ export type MarkDownloadedResult =
 
 /**
  * Records that the browser received the approved SOP's PDF and started the download. It is the one
- * write an approved session allows, and it does not weaken "an approved SOP is immutable": it is
+ * write an approved session allows, and it does not weaken "an approved SOP is read-only": it is
  * not a claim write and never touches a claim, the history, an acknowledgement, or the approval
  * time. It changes only `downloadedAt` (and `updatedAt` with it), which is a fact about the export
- * and not part of the SOP.
+ * and not part of the SOP. `reopenSession` (`approval.ts`) is a different thing: a transition out
+ * of approved, not a write inside it, and it clears `downloadedAt` rather than setting it.
  *
  * The first download time is kept: a second download returns the same session untouched.
  */

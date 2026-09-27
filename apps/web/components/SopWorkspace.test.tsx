@@ -203,8 +203,9 @@ describe("after approval", () => {
 
     await waitFor(() => expect(screen.getByLabelText("Your message")).toBeTruthy());
     expect((screen.getByLabelText("Your message") as HTMLTextAreaElement).disabled).toBe(true);
-    expect(screen.getByText("The SOP is approved, so the chat is read-only.")).toBeTruthy();
-    expect(screen.getByRole("status").textContent).toContain("can no longer be changed");
+    expect(screen.getByText(/The SOP is approved, so the chat is read-only\./)).toBeTruthy();
+    expect(screen.getByRole("status").textContent).toContain("read-only while approved");
+    expect(screen.getByRole("button", { name: "Reopen for editing" })).toBeTruthy();
 
     const reviewButtons = screen
       .getAllByRole("button")
@@ -218,6 +219,108 @@ describe("after approval", () => {
 
     fireEvent.click(screen.getByRole("button", { name: "New chat" }));
     await waitFor(() => expect(storedSession().status).toBe("draft"));
+  });
+});
+
+describe("reopening an approved SOP", () => {
+  it("returns the same session to draft, unlocking the composer, review and upload again", async () => {
+    const storage = installCountingStorage();
+    storeSession(approvedSession());
+    render(<SopWorkspace />);
+    await waitFor(() => expect(reopenButton()).toBeTruthy());
+    const before = storedSession();
+
+    storage.writes.length = 0;
+    fireEvent.click(reopenButton());
+
+    await waitFor(() => expect(storedSession().status).toBe("draft"));
+    expect(storage.writes).toEqual([SESSION_STORAGE_KEY]);
+    expect(storedSession()).toMatchObject({ approvedAt: null, downloadedAt: null });
+    expect(storedSession().claims).toEqual(before.claims);
+    expect(storedSession().messages).toEqual(before.messages);
+
+    expect((screen.getByLabelText("Your message") as HTMLTextAreaElement).disabled).toBe(false);
+    expect(screen.queryByText(/The SOP is approved, so the chat is read-only\./)).toBeNull();
+    expect(screen.getAllByRole("button", { name: "Confirm" }).length).toBeGreaterThan(0);
+    expect(approveButton()).toBeTruthy();
+  });
+
+  it("moves focus to the composer after reopening", async () => {
+    storeSession(approvedSession());
+    render(<SopWorkspace />);
+    await waitFor(() => expect(reopenButton()).toBeTruthy());
+
+    fireEvent.click(reopenButton());
+
+    await waitFor(() => expect(document.activeElement).toBe(screen.getByLabelText("Your message")));
+  });
+
+  it("re-approves with a fresh approval time, and downloads under a new file name", async () => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    vi.setSystemTime(new Date("2026-03-01T09:00:00.000Z"));
+    storeSession(approvedSession());
+    const fetchMock = vi.fn(async () => pdfResponse());
+    vi.stubGlobal("fetch", fetchMock);
+    const browser = stubBrowserDownload();
+    render(<SopWorkspace />);
+    await waitFor(() => expect(reopenButton()).toBeTruthy());
+    const firstApprovedAt = storedSession().approvedAt;
+
+    fireEvent.click(reopenButton());
+    await waitFor(() => expect(storedSession().status).toBe("draft"));
+
+    vi.setSystemTime(new Date("2026-03-01T09:05:00.000Z"));
+    fireEvent.click(approveButton());
+    await waitFor(() => expect(storedSession().status).toBe("approved"));
+    expect(storedSession().approvedAt).not.toBe(firstApprovedAt);
+
+    await waitFor(() => expect(downloadButton()).toBeTruthy());
+    fireEvent.click(downloadButton());
+    await waitFor(() => expect(storedSession().downloadedAt).not.toBeNull());
+    expect(browser.started).toEqual([
+      { fileName: "standard-operating-procedure-2026-03-01-0905.pdf", href: "blob:sop-test" },
+    ]);
+    vi.useRealTimers();
+  });
+
+  it("is disabled while a download is in flight, so it cannot race markSopDownloaded", async () => {
+    storeSession(approvedSession());
+    let finishRequest: (response: Response) => void = () => {};
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(
+        () =>
+          new Promise<Response>((resolve) => {
+            finishRequest = resolve;
+          }),
+      ),
+    );
+    stubBrowserDownload();
+    render(<SopWorkspace />);
+    await waitFor(() => expect(downloadButton()).toBeTruthy());
+
+    fireEvent.click(downloadButton());
+    await waitFor(() => expect(reopenButton().disabled).toBe(true));
+
+    fireEvent.click(reopenButton());
+    expect(storedSession().status).toBe("approved");
+
+    await act(async () => finishRequest(pdfResponse()));
+    await waitFor(() => expect(reopenButton().disabled).toBe(false));
+    expect(screen.queryByRole("alert")).toBeNull();
+  });
+
+  it("shows the not-downloaded hint before a download, and clears it after one", async () => {
+    storeSession(approvedSession());
+    const fetchMock = vi.fn(async () => pdfResponse());
+    vi.stubGlobal("fetch", fetchMock);
+    stubBrowserDownload();
+    render(<SopWorkspace />);
+    await waitFor(() => expect(reopenButton()).toBeTruthy());
+    expect(screen.getByText(/Not downloaded yet/)).toBeTruthy();
+
+    fireEvent.click(downloadButton());
+    await waitFor(() => expect(screen.queryByText(/Not downloaded yet/)).toBeNull());
   });
 });
 
@@ -374,6 +477,8 @@ function approvedSession(): SopSession {
 }
 
 const downloadButton = () => screen.getByRole("button", { name: /Download PDF|Preparing PDF/ });
+const reopenButton = () =>
+  screen.getByRole("button", { name: "Reopen for editing" }) as HTMLButtonElement;
 
 function pdfResponse(): Response {
   return new Response(new Blob(["%PDF-1.4 test"], { type: "application/pdf" }), {

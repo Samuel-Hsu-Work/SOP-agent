@@ -107,7 +107,10 @@ export function ChatPanel(props: ChatPanelProps) {
         </p>
       ) : null}
       {isReadOnly ? (
-        <p className="banner banner-notice">The SOP is approved, so the chat is read-only.</p>
+        <p className="banner banner-notice">
+          The SOP is approved, so the chat is read-only. To change it, reopen it for editing in the
+          approval panel.
+        </p>
       ) : null}
 
       <form className="composer" onSubmit={handleSubmit}>

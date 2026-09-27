@@ -11,6 +11,7 @@ export interface ApprovalPanelProps {
   isDownloading: boolean;
   downloadError: string | null;
   onDownload: () => void;
+  onReopen: () => void;
 }
 
 function formatApprovalTime(iso: string): string {
@@ -31,6 +32,7 @@ export function ApprovalPanel({
   isDownloading,
   downloadError,
   onDownload,
+  onReopen,
 }: ApprovalPanelProps) {
   const view = buildApprovalView(session);
 
@@ -44,12 +46,14 @@ export function ApprovalPanel({
           <p className="approved-notice" role="status">
             <strong>Approved</strong>
             {view.approvedAt === null ? null : ` on ${formatApprovalTime(view.approvedAt)}`}. The
-            SOP can no longer be changed. Start a new chat to write another one.
+            SOP is read-only while approved. To change it, reopen it for editing: you will need to
+            approve it again, and the new approval downloads as a separate PDF. Start a new chat to
+            write a different SOP.
           </p>
           {view.downloadedAt === null ? (
             <p className="download-notice">
-              <strong>Not downloaded yet.</strong> The PDF is the only lasting record: closing this
-              tab or starting a new chat loses this SOP.
+              <strong>Not downloaded yet.</strong> Download the PDF first if you want to keep this
+              approved version — reopening it for editing does not keep a copy.
             </p>
           ) : (
             <p className="download-notice">
@@ -64,6 +68,9 @@ export function ApprovalPanel({
               {downloadError}
             </p>
           )}
+          <button type="button" className="secondary" onClick={onReopen} disabled={isDownloading}>
+            Reopen for editing
+          </button>
         </div>
       </section>
     );

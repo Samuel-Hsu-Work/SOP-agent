@@ -1,6 +1,6 @@
 "use client";
 
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { wouldLoseWork } from "../lib/unsavedWork.ts";
 import { useLeavePageWarning } from "../lib/useLeavePageWarning.ts";
 import { useSopSession } from "../lib/useSopSession.ts";
@@ -26,6 +26,7 @@ export function SopWorkspace() {
     rejectClaim,
     setAcknowledged,
     approve,
+    reopen,
     downloadPdf,
     isDownloading,
     downloadError,
@@ -36,11 +37,25 @@ export function SopWorkspace() {
   useLeavePageWarning(session !== null && wouldLoseWork(session, isSending));
   const [sideView, setSideView] = useState<SideView>("review");
   const composerRef = useRef<HTMLTextAreaElement | null>(null);
+  const focusComposerOnUnlock = useRef(false);
 
   function describeChangeInChat() {
     composerRef.current?.focus();
     composerRef.current?.scrollIntoView({ block: "center" });
   }
+
+  function reopenForEditing() {
+    if (reopen()) focusComposerOnUnlock.current = true;
+  }
+
+  // The composer is disabled at the moment reopen() returns (React has not yet re-rendered it as
+  // enabled), so focusing it there would be a no-op. This runs after the render that enables it.
+  useEffect(() => {
+    if (!focusComposerOnUnlock.current || session?.status !== "draft") return;
+    focusComposerOnUnlock.current = false;
+    composerRef.current?.focus();
+    composerRef.current?.scrollIntoView({ block: "center" });
+  }, [session]);
 
   return (
     <div className="workspace">
@@ -127,6 +142,7 @@ export function SopWorkspace() {
                     isDownloading={isDownloading}
                     downloadError={downloadError}
                     onDownload={downloadPdf}
+                    onReopen={reopenForEditing}
                   />
                 </>
               ) : (

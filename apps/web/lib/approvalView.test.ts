@@ -2,6 +2,7 @@ import {
   applyClaim,
   approveSession,
   type ClaimWriteCommand,
+  reopenSession,
   SOP_FIELD_NAMES,
   type SopFieldName,
   type SopSession,
@@ -140,6 +141,31 @@ describe("buildApprovalView", () => {
       isApproved: true,
       canApprove: false,
       approvedAt: "2026-01-01T00:00:00.000Z",
+      reasons: [],
+    });
+  });
+
+  it("reports a reopened session as an ordinary draft again, ready to approve with nothing changed", () => {
+    const { context, withBlockingDone, acknowledge } = setup();
+    let current = withBlockingDone();
+    for (const field of [
+      "exceptions",
+      "evidence",
+      "controls",
+      "decisionRules",
+      "prerequisites",
+    ] as const) {
+      current = acknowledge(current, field);
+    }
+    const approved = approveSession(current, context);
+    if (!approved.ok) throw new Error("setup failed");
+    const reopened = reopenSession(approved.session, context);
+    if (!reopened.ok) throw new Error("setup failed");
+
+    expect(buildApprovalView(reopened.session)).toMatchObject({
+      isApproved: false,
+      canApprove: true,
+      approvedAt: null,
       reasons: [],
     });
   });

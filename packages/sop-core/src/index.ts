@@ -17,6 +17,8 @@ export type {
   ApprovalErrorCode,
   ApproveSessionResult,
   FinalizationCheck,
+  ReopenErrorCode,
+  ReopenSessionResult,
   SetAcknowledgementResult,
   SopExportCheck,
   SopExportRefusalReason,
@@ -28,6 +30,8 @@ export {
   approveSession,
   canExportApprovedSop,
   checkFinalization,
+  REOPEN_ERROR_CODES,
+  reopenSession,
   setAdvisoryAcknowledgement,
 } from "./approval.ts";
 export type {

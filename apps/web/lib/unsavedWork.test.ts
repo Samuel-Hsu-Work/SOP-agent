@@ -1,6 +1,7 @@
 import {
   applyClaim,
   createEmptySession,
+  reopenSession,
   type SopSession,
   systemWriteContext,
 } from "@sop-agent/sop-core";
@@ -57,5 +58,25 @@ describe("wouldLoseWork", () => {
 
   it("is false for an approved SOP once its download has started", () => {
     expect(wouldLoseWork(approved("2026-01-03T00:00:00.000Z"), false)).toBe(false);
+  });
+
+  it("is true for a session reopened back to draft, since it still has its messages", () => {
+    const approvedWithMessage: SopSession = {
+      ...withMessage,
+      status: "approved",
+      approvedAt: "2026-01-02T00:00:00.000Z",
+      downloadedAt: "2026-01-03T00:00:00.000Z",
+    };
+    const reopened = reopenSession(approvedWithMessage, systemWriteContext);
+    if (!reopened.ok) throw new Error("setup failed");
+    expect(wouldLoseWork(reopened.session, false)).toBe(true);
+  });
+
+  it("is true for a re-approved session that has not yet been downloaded again", () => {
+    const reapproved: SopSession = {
+      ...approved("2026-01-03T00:00:00.000Z"),
+      downloadedAt: null,
+    };
+    expect(wouldLoseWork(reapproved, false)).toBe(true);
   });
 });

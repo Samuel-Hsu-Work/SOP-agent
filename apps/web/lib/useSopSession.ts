@@ -8,6 +8,7 @@ import {
   MAX_EXTRACTED_CLAIMS_PER_DOCUMENT,
   MAX_SESSION_TRANSPORT_BYTES,
   markSopDownloaded,
+  reopenSession,
   type SopSession,
   setAdvisoryAcknowledgement,
   sopPdfFileName,
@@ -281,6 +282,28 @@ export function useSopSession() {
   );
 
   /**
+   * Puts an approved SOP back to draft so it can be changed and approved again. Refused while a
+   * PDF download is in flight: the file would still save under the old name harmlessly, but the
+   * follow-up call that records the download would then run against a session already back to
+   * draft and fail. A stale download error or upload report belongs to the discarded approval
+   * cycle, so both are cleared on success.
+   */
+  const reopen = useCallback(() => {
+    if (activeDownload.current !== null) return false;
+    const changed = applyLocalChange((current) => {
+      const result = reopenSession(current, systemWriteContext);
+      return result.ok
+        ? { ok: true, session: result.session }
+        : { ok: false, message: result.error.message };
+    });
+    if (changed) {
+      setDownloadError(null);
+      setUploadReport(null);
+    }
+    return changed;
+  }, [applyLocalChange]);
+
+  /**
    * Downloads the approved SOP as a PDF. The download is recorded on the session (once, keeping
    * the first time) only after the browser has started it, so a failed request or a blocked
    * download never marks the SOP as downloaded.
@@ -461,6 +484,7 @@ export function useSopSession() {
     rejectClaim,
     setAcknowledged,
     approve,
+    reopen,
     downloadPdf,
     isDownloading,
     downloadError,

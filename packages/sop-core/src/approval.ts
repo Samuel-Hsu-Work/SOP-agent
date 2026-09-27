@@ -218,9 +218,10 @@ const APPROVAL_ERRORS: Record<ApprovalBlocker, { code: ApprovalErrorCode; messag
 
 /**
  * Approves the SOP: status and approval time change together, or not at all. The session is
- * immutable afterwards, because `applyClaim` and the acknowledgement function refuse an approved
- * session first. This runs in the browser; with no login, what it guarantees is the shape of an
- * approval, not that a person clicked. Slice 4's PDF endpoint calls `checkFinalization` itself.
+ * read-only while approved, because `applyClaim` and the acknowledgement function refuse an
+ * approved session first; the only ways out are `reopenSession`, which returns it to draft, and
+ * starting a new chat. This runs in the browser; with no login, what it guarantees is the shape of
+ * an approval, not that a person clicked. Slice 4's PDF endpoint calls `checkFinalization` itself.
  */
 export function approveSession(session: SopSession, context: WriteContext): ApproveSessionResult {
   const check = checkFinalization(session);
@@ -232,5 +233,41 @@ export function approveSession(session: SopSession, context: WriteContext): Appr
   return {
     ok: true,
     session: { ...session, status: "approved", approvedAt: timestamp, updatedAt: timestamp },
+  };
+}
+
+export const REOPEN_ERROR_CODES = ["sop_not_approved"] as const;
+
+export type ReopenErrorCode = (typeof REOPEN_ERROR_CODES)[number];
+
+export type ReopenSessionResult =
+  | { ok: true; session: SopSession }
+  | { ok: false; error: { code: ReopenErrorCode; message: string } };
+
+/**
+ * Puts an approved SOP back to draft so it can be changed and approved again. It keeps no record
+ * that the session was ever approved: status, approval time and download time are cleared
+ * together, since the schema requires all three to agree. Claims, messages, history, procedure
+ * order, advisory acknowledgements and the consistency review are untouched — reopening changes
+ * nothing about the SOP itself, and any later claim change clears the acknowledgements through the
+ * usual commit, exactly as it would on any other draft.
+ */
+export function reopenSession(session: SopSession, context: WriteContext): ReopenSessionResult {
+  if (session.status !== "approved") {
+    return {
+      ok: false,
+      error: { code: "sop_not_approved", message: "Only an approved SOP can be reopened." },
+    };
+  }
+  const timestamp = context.now();
+  return {
+    ok: true,
+    session: {
+      ...session,
+      status: "draft",
+      approvedAt: null,
+      downloadedAt: null,
+      updatedAt: timestamp,
+    },
   };
 }

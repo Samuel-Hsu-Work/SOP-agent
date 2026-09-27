@@ -318,6 +318,21 @@ describe("sopSessionSchema", () => {
       expect(sopSessionSchema.safeParse(withoutField).success).toBe(false);
     });
 
+    it("parses a draft that still carries claims, history and acknowledgements — the shape a reopened session has", () => {
+      const rich = buildRichSession();
+      const stillDraft = {
+        ...rich,
+        advisoryAcknowledgements: [
+          { field: "controls", acknowledgedAt: "2026-01-02T00:00:00.000Z" },
+        ],
+      };
+      expect(stillDraft.status).toBe("draft");
+      expect(stillDraft.approvedAt).toBeNull();
+      expect(stillDraft.downloadedAt).toBeNull();
+      expect(rich.claimHistory.length).toBeGreaterThan(0);
+      expect(sopSessionSchema.safeParse(stillDraft).success).toBe(true);
+    });
+
     it("accepts one acknowledgement per advisory field, and nothing else", () => {
       const draft = empty();
       const acknowledged = (field: string) => ({

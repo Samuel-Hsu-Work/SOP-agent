@@ -4,8 +4,10 @@ import {
   approveSession,
   canExportApprovedSop,
   checkFinalization,
+  reopenSession,
   setAdvisoryAcknowledgement,
 } from "./approval.ts";
+import { markSopDownloaded } from "./download.ts";
 import { type SopSession, sopSessionSchema } from "./session.ts";
 import {
   ADVISORY_FIELD_NAMES,
@@ -336,6 +338,141 @@ describe("approveSession", () => {
     );
     expect(approveSession(frozen, context).ok).toBe(true);
     expect(frozen.status).toBe("draft");
+  });
+});
+
+describe("reopenSession", () => {
+  it("refuses a draft, and does not touch the clock", () => {
+    const { context, session } = setup();
+    const calls: number[] = [];
+    const counting = {
+      ...context,
+      now: () => {
+        calls.push(1);
+        return context.now();
+      },
+    };
+    const result = reopenSession(session, counting);
+    expect(!result.ok && result.error.code).toBe("sop_not_approved");
+    expect(calls).toEqual([]);
+  });
+
+  it("clears status, approval time and download time together, and keeps everything else", () => {
+    const { context, withBlockingDone, acknowledgeAll } = setup();
+    const ready = acknowledgeAll(withBlockingDone());
+    const approved = approveSession(ready, context);
+    if (!approved.ok) throw new Error("setup failed");
+
+    const reopened = reopenSession(approved.session, context);
+    expect(reopened.ok).toBe(true);
+    if (!reopened.ok) return;
+    expect(reopened.session).toMatchObject({
+      status: "draft",
+      approvedAt: null,
+      downloadedAt: null,
+    });
+    expect(reopened.session.claims).toEqual(approved.session.claims);
+    expect(reopened.session.messages).toEqual(approved.session.messages);
+    expect(reopened.session.claimHistory).toEqual(approved.session.claimHistory);
+    expect(reopened.session.procedureOrder).toEqual(approved.session.procedureOrder);
+    expect(reopened.session.advisoryAcknowledgements).toEqual(
+      approved.session.advisoryAcknowledgements,
+    );
+    expect(reopened.session.consistencyReview).toEqual(approved.session.consistencyReview);
+    expect(sopSessionSchema.safeParse(reopened.session).success).toBe(true);
+  });
+
+  it("clears a download time too, so a downloaded-then-reopened session still parses", () => {
+    const { context, withBlockingDone, acknowledgeAll } = setup();
+    const approved = approveSession(acknowledgeAll(withBlockingDone()), context);
+    if (!approved.ok) throw new Error("setup failed");
+    const downloaded = markSopDownloaded(approved.session, context);
+    if (!downloaded.ok) throw new Error("setup failed");
+    expect(downloaded.session.downloadedAt).not.toBeNull();
+
+    const reopened = reopenSession(downloaded.session, context);
+    expect(reopened.ok && reopened.session.downloadedAt).toBeNull();
+    expect(reopened.ok && sopSessionSchema.safeParse(reopened.session).success).toBe(true);
+  });
+
+  it("lets writes and acknowledgements through again once reopened", () => {
+    const { context, withBlockingDone, acknowledgeAll, acknowledge, messageId } = setup();
+    const approved = approveSession(acknowledgeAll(withBlockingDone()), context);
+    if (!approved.ok) throw new Error("setup failed");
+
+    const reopened = reopenSession(approved.session, context);
+    if (!reopened.ok) throw new Error("setup failed");
+
+    const write = applyClaim(
+      reopened.session,
+      {
+        kind: "record",
+        createdByType: "agent",
+        field: "evidence",
+        status: "observed",
+        statement: "A late addition.",
+        note: null,
+        effectiveDate: null,
+        sourceMessageId: messageId,
+        insertBeforeClaimId: null,
+      },
+      context,
+    );
+    expect(write.ok).toBe(true);
+
+    const ack = acknowledge(reopened.session, "exceptions", false);
+    expect(ack.advisoryAcknowledgements).not.toContainEqual(
+      expect.objectContaining({ field: "exceptions" }),
+    );
+  });
+
+  it("re-approves in one step when nothing changed, with a fresh approval time", () => {
+    const { context, withBlockingDone, acknowledgeAll } = setup();
+    const firstApproval = approveSession(acknowledgeAll(withBlockingDone()), context);
+    if (!firstApproval.ok) throw new Error("setup failed");
+
+    const reopened = reopenSession(firstApproval.session, context);
+    if (!reopened.ok) throw new Error("setup failed");
+    expect(checkFinalization(reopened.session).canApprove).toBe(true);
+
+    const laterContext = { ...context, now: () => "2026-01-01T00:05:00.000Z" };
+    const secondApproval = approveSession(reopened.session, laterContext);
+    expect(secondApproval.ok).toBe(true);
+    if (!secondApproval.ok) return;
+    expect(secondApproval.session.approvedAt).toBe("2026-01-01T00:05:00.000Z");
+    expect(secondApproval.session.approvedAt).not.toBe(firstApproval.session.approvedAt);
+  });
+
+  it("requires the advisory gaps to be acknowledged again after an edit", () => {
+    const { context, withBlockingDone, acknowledgeAll, record } = setup();
+    const approved = approveSession(acknowledgeAll(withBlockingDone()), context);
+    if (!approved.ok) throw new Error("setup failed");
+    const reopened = reopenSession(approved.session, context);
+    if (!reopened.ok) throw new Error("setup failed");
+
+    const edited = record(reopened.session, "evidence").session;
+    expect(edited.advisoryAcknowledgements).toEqual([]);
+
+    const tooSoon = approveSession(edited, context);
+    expect(!tooSoon.ok && tooSoon.error.code).toBe("advisory_gaps_unacknowledged");
+  });
+
+  it("can no longer be exported once reopened", () => {
+    const { context, withBlockingDone, acknowledgeAll } = setup();
+    const approved = approveSession(acknowledgeAll(withBlockingDone()), context);
+    if (!approved.ok) throw new Error("setup failed");
+    const reopened = reopenSession(approved.session, context);
+    if (!reopened.ok) throw new Error("setup failed");
+    expect(canExportApprovedSop(reopened.session)).toEqual({ ok: false, reason: "not_approved" });
+  });
+
+  it("never mutates its input", () => {
+    const { context, withBlockingDone, acknowledgeAll } = setup();
+    const approved = approveSession(acknowledgeAll(withBlockingDone()), context);
+    if (!approved.ok) throw new Error("setup failed");
+    const frozen = deepFreeze(JSON.parse(JSON.stringify(approved.session)) as SopSession);
+    expect(reopenSession(frozen, context).ok).toBe(true);
+    expect(frozen.status).toBe("approved");
   });
 });
 
