@@ -137,6 +137,48 @@ the interview agenda (which fields to ask next, computed in code) as a separate 
   listens on `127.0.0.1` by default, so it is private until you deploy it. If you do, cap what the
   key can spend first (see "Deploy").
 
+## Why there is no database
+
+The project exists to show the agent working: how it interviews, finds gaps, and refuses to settle
+what it does not know. A database, logins and tenants would not show any of that, so v1 leaves them
+out on purpose. Leaving out a database is a separate choice from leaving out tenants. A single-user
+SQLite file would have been small. The choice is where the state lives: in the browser tab rather
+than on the server.
+
+What that buys:
+
+- **A privacy promise that is easy to check.** The server keeps nothing, so there is nothing to
+  retain, secure or delete.
+- **A simple deployment.** Both services are stateless, so a restart or a second instance loses
+  nothing and needs no volume or migration.
+
+What it costs:
+
+- **The rules run in the browser as well as on the server.** Review, acknowledgement and approval
+  happen in the tab, which is why `packages/sop-core` is shared and imports nothing server-only.
+- **The server cannot trust the session it receives.** Every request is validated, and the PDF
+  endpoint rechecks approval itself, because a hand-built session can claim to be approved.
+- **Every request carries the whole session.** Its size is capped, and document text is never kept
+  in it, only citations.
+- **Nothing outlives the tab.** There is no resume, no list of past SOPs and no audit trail on the
+  server. The downloaded PDF is the only durable record. A session saved by an older schema version
+  is discarded, not migrated.
+
+What adding a database would change:
+
+- The server becomes the source of truth. Review, acknowledgement and approval become API routes that
+  run the same `sop-core` functions, and the browser sends a session id and the new message instead
+  of the whole session.
+- `sop-core` would still be a separate module, because keeping the rules apart from HTTP and the model
+  is what makes them testable. It would run only on the server, and the browser would keep only its
+  types and the functions that shape what the page shows.
+- The recheck of a forged session and the size cap on requests go away. Retention, deletion,
+  schema migrations and concurrent writes to one session become new work.
+- The claim history and the approved SOP become a lasting audit trail, which v1 does not provide.
+
+The full product design (Postgres with row-level security and append-only claim history) remains
+the target. The rules and the single path that writes a claim would carry over unchanged.
+
 ## Deploy
 
 The web app and the API are separate, so they deploy separately: the API on Render, the web app on
