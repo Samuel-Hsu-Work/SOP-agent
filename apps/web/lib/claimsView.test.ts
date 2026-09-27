@@ -86,32 +86,6 @@ describe("buildClaimsView", () => {
     });
   });
 
-  it("attaches an earlier version to the claim that replaced it, newest first", () => {
-    const { session, record, apply } = setup();
-    const original = record(session, "authorization", "A lead approves refunds over $200.");
-    const second = apply(original.session, {
-      kind: "correct",
-      claimId: original.claim.claimId,
-      statement: "A lead approves refunds over $300.",
-      note: null,
-      effectiveDate: null,
-    });
-    const third = apply(second.session, {
-      kind: "correct",
-      claimId: original.claim.claimId,
-      statement: "A manager approves refunds over $300.",
-      note: null,
-      effectiveDate: null,
-    });
-
-    const [claim] = viewOf(third.session, "authorization").claims;
-    expect(claim?.text).toBe("A manager approves refunds over $300.");
-    expect(claim?.previousVersions.map((version) => [version.reasonLabel, version.text])).toEqual([
-      ["Corrected", "A lead approves refunds over $300."],
-      ["Corrected", "A lead approves refunds over $200."],
-    ]);
-  });
-
   it("shows an unknown claim without text and keeps what was unknown in the note", () => {
     const { session, apply } = setup();
     const unknown = apply(session, {
@@ -148,21 +122,6 @@ describe("buildClaimsView", () => {
         changeNote: "Another team handles in-store purchases.",
       }),
     ]);
-  });
-
-  it("keeps the history of one field out of another", () => {
-    const { session, record, apply } = setup();
-    const purpose = record(session, "purpose", "Handle refunds.");
-    const scope = record(purpose.session, "scope", "Online orders.");
-    const corrected = apply(scope.session, {
-      kind: "correct",
-      claimId: scope.claim.claimId,
-      statement: "Online and phone orders.",
-      note: null,
-      effectiveDate: null,
-    });
-    expect(viewOf(corrected.session, "purpose").claims[0]?.previousVersions).toEqual([]);
-    expect(viewOf(corrected.session, "scope").claims[0]?.previousVersions).toHaveLength(1);
   });
 
   it("shows a suggested claim as the agent's, not the user's", () => {
@@ -253,55 +212,6 @@ describe("buildClaimsView", () => {
       canConfirm: false,
       canReject: true,
       rejectLabel: "Withdraw confirmation",
-    });
-  });
-
-  it("shows a confirmation in the history of the claim, with the status it replaced", () => {
-    const { session, record } = setup();
-    const claim = record(session, "purpose", "Handle refunds.");
-    const confirmed = applyClaim(
-      claim.session,
-      { kind: "confirm", createdByType: "user", claimId: claim.claim.claimId },
-      createDeterministicContext(),
-    );
-    if (!confirmed.ok) throw new Error("setup failed");
-    const [shown] = viewOf(confirmed.session, "purpose").claims;
-    expect(shown?.previousVersions).toEqual([
-      expect.objectContaining({
-        reasonLabel: "Confirmed",
-        statusLabel: "Stated by you",
-        text: "Handle refunds.",
-      }),
-    ]);
-  });
-
-  it("keeps the effective date and the status of an earlier version, so a date-only change is visible", () => {
-    const { session, apply } = setup();
-    const dated = apply(session, {
-      kind: "record",
-      field: "authorization",
-      status: "observed",
-      statement: "Managers approve above $300.",
-      note: null,
-      effectiveDate: "2025-03-01",
-      insertBeforeClaimId: null,
-    });
-    const moved = apply(dated.session, {
-      kind: "correct",
-      claimId: dated.claim.claimId,
-      statement: "Managers approve above $300.",
-      note: null,
-      effectiveDate: "2025-06-01",
-    });
-    const [claim] = viewOf(moved.session, "authorization").claims;
-    expect(claim).toMatchObject({
-      text: "Managers approve above $300.",
-      effectiveDate: "2025-06-01",
-    });
-    expect(claim?.previousVersions[0]).toMatchObject({
-      text: "Managers approve above $300.",
-      effectiveDate: "2025-03-01",
-      statusLabel: "Stated by you",
     });
   });
 

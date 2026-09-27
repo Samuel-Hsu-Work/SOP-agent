@@ -54,31 +54,14 @@ function Citation({ claim }: { claim: ClaimView }) {
   );
 }
 
-function PreviousVersions({ versions }: { versions: ClaimVersionView[] }) {
-  if (versions.length === 0) return null;
-  return (
-    <details className="claim-history">
-      <summary>Earlier versions ({versions.length})</summary>
-      <ul>
-        {versions.map((version) => (
-          <li key={version.entryId}>
-            <VersionText version={version} />
-          </li>
-        ))}
-      </ul>
-    </details>
-  );
-}
-
 interface ClaimItemProps {
   claim: ClaimView;
   isLocked: boolean;
   onConfirm: (claimId: string) => void;
   onReject: (claimId: string) => void;
-  onDescribeChange: () => void;
 }
 
-function ClaimItem({ claim, isLocked, onConfirm, onReject, onDescribeChange }: ClaimItemProps) {
+function ClaimItem({ claim, isLocked, onConfirm, onReject }: ClaimItemProps) {
   return (
     <li className="claim">
       <div className="claim-body">
@@ -114,11 +97,7 @@ function ClaimItem({ claim, isLocked, onConfirm, onReject, onDescribeChange }: C
             {claim.rejectLabel}
           </button>
         ) : null}
-        <button type="button" className="small link" disabled={isLocked} onClick={onDescribeChange}>
-          Describe a change in chat
-        </button>
       </div>
-      <PreviousVersions versions={claim.previousVersions} />
     </li>
   );
 }
@@ -130,11 +109,11 @@ function ClaimItem({ claim, isLocked, onConfirm, onReject, onDescribeChange }: C
 function ConflictPair({
   pair,
   isLocked,
-  onDescribeChange,
+  onAnswerInChat,
 }: {
   pair: ConflictPairView;
   isLocked: boolean;
-  onDescribeChange: () => void;
+  onAnswerInChat: () => void;
 }) {
   return (
     <li className="conflict">
@@ -153,7 +132,7 @@ function ConflictPair({
           </div>
         ))}
       </div>
-      <button type="button" className="small link" disabled={isLocked} onClick={onDescribeChange}>
+      <button type="button" className="small link" disabled={isLocked} onClick={onAnswerInChat}>
         Answer in chat
       </button>
     </li>
@@ -182,8 +161,8 @@ export interface ReadinessPanelProps {
   isBusy: boolean;
   onConfirm: (claimId: string) => void;
   onReject: (claimId: string) => void;
-  /** Moves the cursor to the chat, where every change to a claim is made. */
-  onDescribeChange: () => void;
+  /** Moves the cursor to the chat, where the user gives the final answer to resolve a conflict. */
+  onAnswerInChat: () => void;
 }
 
 /**
@@ -192,7 +171,7 @@ export interface ReadinessPanelProps {
  * step of endorsement. Changes to the words are made by telling the agent in the chat.
  */
 export function ReadinessPanel(props: ReadinessPanelProps) {
-  const { session, isBusy, onConfirm, onReject, onDescribeChange } = props;
+  const { session, isBusy, onConfirm, onReject, onAnswerInChat } = props;
   const fields = buildClaimsView(session);
   const isLocked = isBusy || session.status === "approved";
   const blockingCount = fields.filter((field) => field.gap?.severity === "blocking").length;
@@ -251,7 +230,7 @@ export function ReadinessPanel(props: ReadinessPanelProps) {
                             key={pair.sides[0].claimId}
                             pair={pair}
                             isLocked={isLocked}
-                            onDescribeChange={onDescribeChange}
+                            onAnswerInChat={onAnswerInChat}
                           />
                         ))}
                         {field.claims.map((claim) => (
@@ -261,7 +240,6 @@ export function ReadinessPanel(props: ReadinessPanelProps) {
                             isLocked={isLocked}
                             onConfirm={onConfirm}
                             onReject={onReject}
-                            onDescribeChange={onDescribeChange}
                           />
                         ))}
                       </ul>

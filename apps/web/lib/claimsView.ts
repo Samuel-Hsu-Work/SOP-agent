@@ -67,8 +67,6 @@ export interface ClaimView {
   canReject: boolean;
   /** "Withdraw confirmation" for a confirmed claim, "Reject" otherwise. Same action, honest name. */
   rejectLabel: string;
-  /** Earlier versions of this claim, newest first. */
-  previousVersions: ClaimVersionView[];
 }
 
 /** Two claims that disagree, shown together, once, and read-only: only the user's answer in chat resolves them. */
@@ -163,12 +161,6 @@ export function buildClaimsView(session: SopSession): FieldClaimsView[] {
       sourceLabel: sourceLabelFor(claim),
       ...reviewActionsFor(claim),
       rejectLabel: claim.status === "confirmed" ? "Withdraw confirmation" : "Reject",
-      previousVersions: newestFirst(
-        session.claimHistory.filter(
-          (entry) =>
-            entry.previousClaim.field === readiness.field && entry.claimId === claim.claimId,
-        ),
-      ).map(toVersionView),
     });
 
     // A conflict is shown once, as a pair, and never as two unrelated claims.

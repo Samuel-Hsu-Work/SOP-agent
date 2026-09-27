@@ -39,7 +39,8 @@ export function SopWorkspace() {
   const composerRef = useRef<HTMLTextAreaElement | null>(null);
   const focusComposerOnUnlock = useRef(false);
 
-  function describeChangeInChat() {
+  /** Moves the cursor to the chat, where the user gives the final answer to resolve a conflict. */
+  function answerInChat() {
     composerRef.current?.focus();
     composerRef.current?.scrollIntoView({ block: "center" });
   }
@@ -132,7 +133,7 @@ export function SopWorkspace() {
                     isBusy={isSending || isUploading}
                     onConfirm={confirmClaim}
                     onReject={rejectClaim}
-                    onDescribeChange={describeChangeInChat}
+                    onAnswerInChat={answerInChat}
                   />
                   <ApprovalPanel
                     session={session}

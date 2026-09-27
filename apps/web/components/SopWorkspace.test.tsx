@@ -210,9 +210,7 @@ describe("after approval", () => {
     const reviewButtons = screen
       .getAllByRole("button")
       .filter((button) =>
-        /^(Confirm|Reject|Withdraw confirmation|Describe a change in chat)$/.test(
-          button.textContent ?? "",
-        ),
+        /^(Confirm|Reject|Withdraw confirmation)$/.test(button.textContent ?? ""),
       );
     expect(reviewButtons.length).toBeGreaterThan(0);
     for (const button of reviewButtons) expect((button as HTMLButtonElement).disabled).toBe(true);
