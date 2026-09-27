@@ -43,7 +43,6 @@ interface PreparedSection {
  */
 function prepareSections(document: SopDocument): {
   sections: PreparedSection[];
-  governanceLine: string | null;
   replacedCharacters: number;
 } {
   let replacedCharacters = 0;
@@ -69,11 +68,7 @@ function prepareSections(document: SopDocument): {
       open: prepared.filter((entry) => entry.item.isUnresolved),
     };
   });
-  const governanceLine =
-    document.governanceSummary.length === 0
-      ? null
-      : printable(`Governance: ${document.governanceSummary.join(" ")}`);
-  return { sections, governanceLine, replacedCharacters };
+  return { sections, replacedCharacters };
 }
 
 /** `2026-09-20T14:32:07.000Z` as `2026-09-20 14:32 UTC`, so the time is the same in every locale. */
@@ -97,7 +92,7 @@ export function renderSopPdf(document: SopDocument): Promise<RenderedSopPdf> {
         throw new Error("Only an approved SOP can be rendered as a PDF.");
       }
       const approvedAt = document.approvedAt;
-      const { sections, governanceLine, replacedCharacters } = prepareSections(document);
+      const { sections, replacedCharacters } = prepareSections(document);
 
       const pdf = new PDFDocument({
         size: "A4",
@@ -133,18 +128,6 @@ export function renderSopPdf(document: SopDocument): Promise<RenderedSopPdf> {
       pdf.text(`Version: ${document.version}`);
       pdf.text("Status: Approved");
       pdf.text(`Approved at: ${formatUtcTime(approvedAt)}`);
-      if (document.approvalBasis !== null) pdf.text(document.approvalBasis);
-      if (governanceLine !== null) pdf.text(governanceLine);
-      pdf.text(
-        `Claims: ${document.counts.confirmedClaims} confirmed of ${document.counts.totalClaims}`,
-      );
-      pdf.text(
-        `Gaps: ${plural(document.counts.blockingGaps, "blocking gap", "blocking gaps")}, ${plural(
-          document.counts.advisoryGaps,
-          "advisory gap",
-          "advisory gaps",
-        )}`,
-      );
       if (replacedCharacters > 0) {
         pdf.moveDown(0.5).font(FONT_ITALIC);
         pdf.text(

@@ -183,11 +183,9 @@ describe("the approval step", () => {
     await waitFor(() => expect(screen.getByRole("status").textContent).toContain("Approved"));
     expect(storedSession().status).toBe("approved");
     expect((screen.getByLabelText("Your message") as HTMLTextAreaElement).disabled).toBe(true);
-    // The preview says what the approval means, so a reader does not take it for verification.
+    // The preview no longer prints who confirmed what, only the finished content.
     fireEvent.click(await screen.findByRole("tab", { name: "SOP preview" }));
-    expect(screen.getByText(/Approved by the person interviewed\./).textContent).toContain(
-      "individually confirmed",
-    );
+    expect(screen.queryByText(/Approved by the person interviewed/)).toBeNull();
   });
 });
 

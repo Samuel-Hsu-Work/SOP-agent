@@ -63,57 +63,6 @@ const sectionOf = (document: ReturnType<typeof buildSopDocument>, field: SopFiel
   return section;
 };
 
-describe("the document-control block", () => {
-  const approvedWith = (session: SopSession, claims: Claim[]): SopSession => ({
-    ...session,
-    claims,
-    status: "approved",
-    approvedAt: "2026-01-01T00:00:00.000Z",
-  });
-
-  it("says nothing about an approval for a draft", () => {
-    const { session } = setup();
-    expect(buildSopDocument(session).approvalBasis).toBeNull();
-  });
-
-  it("says plainly when an approved SOP has no individually confirmed claim", () => {
-    const { session, handBuilt } = setup();
-    const document = buildSopDocument(approvedWith(session, [handBuilt("observed")]));
-    expect(document.approvalBasis).toContain("Approved by the person interviewed");
-    expect(document.approvalBasis).toContain("No claim was individually confirmed");
-  });
-
-  it("counts the confirmed claims when only some were confirmed, and says so when all were", () => {
-    const { session, handBuilt } = setup();
-    const some = buildSopDocument(
-      approvedWith(session, [
-        handBuilt("confirmed", { claimId: "a" }),
-        handBuilt("observed", { claimId: "b" }),
-      ]),
-    );
-    expect(some.approvalBasis).toContain("1 of 2 claims were individually confirmed");
-    const all = buildSopDocument(approvedWith(session, [handBuilt("confirmed")]));
-    expect(all.approvalBasis).toContain("Every claim was individually confirmed");
-  });
-
-  it("repeats the stated governance items, and only those, at the top", () => {
-    const { session, handBuilt } = setup();
-    const document = buildSopDocument({
-      ...session,
-      claims: [
-        handBuilt("observed", {
-          claimId: "owner",
-          field: "governance",
-          value: { kind: "statement", text: "The Support Lead owns the procedure." },
-        }),
-        handBuilt("unknown", { claimId: "review", field: "governance" }),
-        handBuilt("observed", { claimId: "other", field: "roles" }),
-      ],
-    });
-    expect(document.governanceSummary).toEqual(["The Support Lead owns the procedure."]);
-  });
-});
-
 describe("buildSopDocument", () => {
   it("has the fixed title and version, and all 13 sections blocking first, even for an empty session", () => {
     const { session } = setup();
@@ -125,7 +74,6 @@ describe("buildSopDocument", () => {
       status: "draft",
       approvedAt: null,
       legend: [],
-      counts: { blockingGaps: 8, advisoryGaps: 5, confirmedClaims: 0, totalClaims: 0 },
     });
     expect(document.sections.map((section) => section.field)).toEqual([...SOP_FIELD_NAMES]);
     expect(document.sections[0]).toMatchObject({
@@ -265,21 +213,6 @@ describe("buildSopDocument", () => {
     const document = buildSopDocument(withdrawn);
     expect(sectionOf(document, "scope").items).toEqual([]);
     expect(JSON.stringify(document)).not.toContain("Online orders.");
-    expect(document.counts.totalClaims).toBe(0);
-  });
-
-  it("counts confirmed claims, and matches the gap counts", () => {
-    const { session, handBuilt } = setup();
-    const claims = [
-      handBuilt("confirmed", { field: "purpose", claimId: "a" }),
-      handBuilt("observed", { field: "scope", claimId: "b" }),
-    ];
-    expect(buildSopDocument({ ...session, claims }).counts).toEqual({
-      blockingGaps: 6,
-      advisoryGaps: 5,
-      confirmedClaims: 1,
-      totalClaims: 2,
-    });
   });
 
   it("carries the approval, and shows which advisory gaps the approver acknowledged", () => {
