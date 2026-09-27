@@ -8,12 +8,14 @@ import {
   mergeConsistencyAnalysis,
   needsConsistencyReview,
   nextConsistencyQuestion,
+  pendingMismatchClaims,
   statedClaimsInReadingOrder,
   statesOutOfTime,
 } from "./consistencyReview.ts";
 import {
   type ConsistencyAnalysisOutput,
   consistencyReviewSchema,
+  MAX_ABOUT_CLAIM_STATEMENT_LENGTH,
   MAX_CONSISTENCY_QUESTIONS_PER_SESSION,
 } from "./consistencyReviewSchema.ts";
 import { buildInterviewAgenda } from "./interviewAgenda.ts";
@@ -361,6 +363,278 @@ describe("storing what the model returned", () => {
   });
 });
 
+describe("restatement_mismatch", () => {
+  const MISMATCH_OUTPUT = (
+    relatedClaimIds: string[],
+    targetField: SopFieldName = "authorization",
+  ): ConsistencyAnalysisOutput => ({
+    findings: [
+      {
+        priorFindingId: null,
+        category: "restatement_mismatch",
+        targetField,
+        relatedClaimIds,
+        question:
+          "The roles and authorization fields disagree about the $2,000 boundary. Which is right?",
+      },
+    ],
+    resolvedPriorFindingIds: [],
+  });
+
+  function twoDistinctClaimIds(session: SopSession): [string, string] {
+    const roles = session.claims.find((claim) => claim.field === "roles");
+    const authorization = session.claims.find((claim) => claim.field === "authorization");
+    if (roles === undefined || authorization === undefined) throw new Error("fixture missing");
+    return [roles.claimId, authorization.claimId];
+  }
+
+  it("accepts a mismatch citing two distinct claims from different fields, and writes no claim", () => {
+    const { fullSession, context } = setup();
+    const session = fullSession();
+    const [rolesId, authorizationId] = twoDistinctClaimIds(session);
+    const merged = mergeConsistencyAnalysis(
+      session,
+      MISMATCH_OUTPUT([rolesId, authorizationId]),
+      context,
+    );
+    if (!merged.ok) throw new Error(merged.reason);
+    expect(merged.session.consistencyReview?.findings[0]).toMatchObject({
+      category: "restatement_mismatch",
+    });
+    expect(sopSessionSchema.safeParse(merged.session).success).toBe(true);
+    expect(merged.session.claims).toEqual(session.claims);
+  });
+
+  it("refuses fewer than two distinct related claims", () => {
+    const { fullSession, context } = setup();
+    const session = fullSession();
+    const [rolesId] = twoDistinctClaimIds(session);
+    expect(mergeConsistencyAnalysis(session, MISMATCH_OUTPUT([]), context).ok).toBe(false);
+    expect(mergeConsistencyAnalysis(session, MISMATCH_OUTPUT([rolesId]), context).ok).toBe(false);
+    // The same claim cited twice is still only one side of a disagreement.
+    expect(mergeConsistencyAnalysis(session, MISMATCH_OUTPUT([rolesId, rolesId]), context).ok).toBe(
+      false,
+    );
+  });
+
+  it("refuses a targetField that is not one of the cited claims' own fields", () => {
+    const { fullSession, context } = setup();
+    const session = fullSession();
+    const [rolesId, authorizationId] = twoDistinctClaimIds(session);
+    expect(
+      mergeConsistencyAnalysis(
+        session,
+        MISMATCH_OUTPUT([rolesId, authorizationId], "procedure"),
+        context,
+      ).ok,
+    ).toBe(false);
+  });
+
+  it("does not apply the two-claim rule to the other categories", () => {
+    const { fullSession, context } = setup();
+    const merged = mergeConsistencyAnalysis(fullSession(), OUTPUT_WITH_ONE_FINDING([]), context);
+    expect(merged.ok).toBe(true);
+  });
+
+  it("gives the agent each related claim's field and current wording, in citation order", () => {
+    const { fullSession, context } = setup();
+    const session = fullSession();
+    const [rolesId, authorizationId] = twoDistinctClaimIds(session);
+    const merged = mergeConsistencyAnalysis(
+      session,
+      MISMATCH_OUTPUT([authorizationId, rolesId]),
+      context,
+    );
+    if (!merged.ok) throw new Error(merged.reason);
+    const question = nextConsistencyQuestion(merged.session);
+    expect(question?.aboutClaims).toEqual([
+      {
+        id: authorizationId,
+        field: "authorization",
+        statement: "Managers up to $2,000, and above that the Finance Director.",
+      },
+      {
+        id: rolesId,
+        field: "roles",
+        statement: "The Finance Director approves refunds above $2,000.",
+      },
+    ]);
+  });
+
+  it("truncates a long claim statement, so up to three of them cannot meaningfully compete with the state-size margin", () => {
+    const { fullSession, context, apply } = setup();
+    const session = fullSession();
+    const [rolesId, authorizationId] = twoDistinctClaimIds(session);
+    const longStatement = "The Finance Director approves refunds above $2,000. ".repeat(20);
+    const lengthened = apply(session, {
+      kind: "correct",
+      createdByType: "agent",
+      claimId: rolesId,
+      statement: longStatement,
+      note: null,
+      effectiveDate: null,
+      sourceMessageId: session.messages[0]?.id ?? "",
+    }).session;
+
+    const merged = mergeConsistencyAnalysis(
+      lengthened,
+      MISMATCH_OUTPUT([authorizationId, rolesId]),
+      context,
+    );
+    if (!merged.ok) throw new Error(merged.reason);
+    const question = nextConsistencyQuestion(merged.session);
+    const roles = question?.aboutClaims.find((claim) => claim.id === rolesId);
+    expect(roles?.statement.length).toBe(MAX_ABOUT_CLAIM_STATEMENT_LENGTH);
+    expect(roles?.statement.endsWith("…")).toBe(true);
+    expect(longStatement.startsWith(roles?.statement.slice(0, -1) ?? "")).toBe(true);
+  });
+
+  it("keeps a mismatch's claims available to correct on the answering turn, once it is no longer the question being asked", () => {
+    const { fullSession, context } = setup();
+    const session = fullSession();
+    const [rolesId, authorizationId] = twoDistinctClaimIds(session);
+    const merged = mergeConsistencyAnalysis(
+      session,
+      MISMATCH_OUTPUT([rolesId, authorizationId]),
+      context,
+    );
+    if (!merged.ok) throw new Error(merged.reason);
+    const findingId = merged.session.consistencyReview?.findings[0]?.findingId ?? "";
+
+    // Before it is offered, there is nothing pending yet: it is still the question to ask.
+    expect(pendingMismatchClaims(merged.session)).toEqual([]);
+    expect(nextConsistencyQuestion(merged.session)?.findingId).toBe(findingId);
+
+    // Once offered (the same turn it was asked), it is no longer nextConsistencyQuestion...
+    const offered = markConsistencyQuestionOffered(merged.session, findingId, context);
+    expect(nextConsistencyQuestion(offered)).toBeNull();
+    // ...but its claims are still available on the answering turn, so it can still be corrected.
+    expect(
+      pendingMismatchClaims(offered)
+        .map((claim) => claim.id)
+        .sort(),
+    ).toEqual([rolesId, authorizationId].sort());
+
+    // Once a later review reports it resolved, it is gone from both.
+    const resolved = mergeConsistencyAnalysis(
+      offered,
+      { findings: [], resolvedPriorFindingIds: [findingId] },
+      context,
+    );
+    if (!resolved.ok) throw new Error(resolved.reason);
+    expect(pendingMismatchClaims(resolved.session)).toEqual([]);
+  });
+
+  it("exposes only the most recently offered mismatch, not every one ever offered, so the aggregate stays bounded", () => {
+    const { fullSession, context } = setup();
+    const session = fullSession();
+    const [rolesId, authorizationId] = twoDistinctClaimIds(session);
+    const purposeId = session.claims.find((claim) => claim.field === "purpose")?.claimId ?? "";
+    const scopeId = session.claims.find((claim) => claim.field === "scope")?.claimId ?? "";
+
+    const firstMismatch = mergeConsistencyAnalysis(
+      session,
+      MISMATCH_OUTPUT([rolesId, authorizationId]),
+      context,
+    );
+    if (!firstMismatch.ok) throw new Error(firstMismatch.reason);
+    const firstId = firstMismatch.session.consistencyReview?.findings[0]?.findingId ?? "";
+    const afterFirstOffered = markConsistencyQuestionOffered(
+      firstMismatch.session,
+      firstId,
+      context,
+    );
+
+    // A second, distinct mismatch is raised and offered before the first is ever resolved. The
+    // first is carried forward unchanged, since the review must account for every earlier finding.
+    const firstFinding = firstMismatch.session.consistencyReview?.findings[0];
+    if (firstFinding === undefined) throw new Error("no first finding");
+    const secondOutput: ConsistencyAnalysisOutput = {
+      // The new (about-to-be-offered) finding is listed BEFORE the older carried one on purpose:
+      // "most recent" must come from offeredSequence, never from position in this array, since
+      // nothing constrains which order the model returns findings in on a later merge.
+      findings: [
+        {
+          priorFindingId: null,
+          category: "restatement_mismatch",
+          targetField: "scope",
+          relatedClaimIds: [purposeId, scopeId],
+          question: "The purpose and scope fields disagree. Which is right?",
+        },
+        {
+          priorFindingId: firstId,
+          category: firstFinding.category,
+          targetField: firstFinding.targetField,
+          relatedClaimIds: firstFinding.relatedClaimIds,
+          question: firstFinding.question,
+        },
+      ],
+      resolvedPriorFindingIds: [],
+    };
+    const secondMismatch = mergeConsistencyAnalysis(afterFirstOffered, secondOutput, context);
+    if (!secondMismatch.ok) throw new Error(secondMismatch.reason);
+    const secondId =
+      secondMismatch.session.consistencyReview?.findings.find(
+        (finding) => finding.findingId !== firstId,
+      )?.findingId ?? "";
+    const afterBothOffered = markConsistencyQuestionOffered(
+      secondMismatch.session,
+      secondId,
+      context,
+    );
+
+    // Only the second (most recently offered) mismatch's claims are exposed, not both.
+    const pending = pendingMismatchClaims(afterBothOffered);
+    expect(pending.map((claim) => claim.id).sort()).toEqual([purposeId, scopeId].sort());
+    expect(pending.some((claim) => claim.id === rolesId || claim.id === authorizationId)).toBe(
+      false,
+    );
+  });
+
+  it("treats a carried finding as new when its category changes, instead of silently suppressing it", () => {
+    const { fullSession, context } = setup();
+    const session = fullSession();
+    const [rolesId, authorizationId] = twoDistinctClaimIds(session);
+
+    // Raise and offer an ordinary finding, in a category other than restatement_mismatch.
+    const firstMerge = mergeConsistencyAnalysis(session, OUTPUT_WITH_ONE_FINDING([]), context);
+    if (!firstMerge.ok) throw new Error(firstMerge.reason);
+    const findingId = firstMerge.session.consistencyReview?.findings[0]?.findingId ?? "";
+    const offered = markConsistencyQuestionOffered(firstMerge.session, findingId, context);
+    expect(nextConsistencyQuestion(offered)).toBeNull();
+
+    // A later review carries the same finding id forward but reclassifies it as a
+    // restatement_mismatch. This is a genuinely new concern the person was never asked about, even
+    // though it reuses the earlier finding's id, so it must be offered like any new finding: never
+    // silently absorbed as "already offered" under the new category, which would otherwise mean
+    // nextConsistencyQuestion skips it forever while pendingMismatchClaims wrongly shows it as
+    // stale already-offered context instead of a fresh question.
+    const reclassified = mergeConsistencyAnalysis(
+      offered,
+      {
+        findings: [
+          {
+            priorFindingId: findingId,
+            category: "restatement_mismatch",
+            targetField: "authorization",
+            relatedClaimIds: [rolesId, authorizationId],
+            question: "The roles and authorization fields disagree. Which is right?",
+          },
+        ],
+        resolvedPriorFindingIds: [],
+      },
+      context,
+    );
+    if (!reclassified.ok) throw new Error(reclassified.reason);
+    expect(reclassified.session.consistencyReview?.findings[0]).toMatchObject({
+      findingId,
+      wasOffered: false,
+    });
+    expect(nextConsistencyQuestion(reclassified.session)?.findingId).toBe(findingId);
+    expect(pendingMismatchClaims(reclassified.session)).toEqual([]);
+  });
+});
+
 describe("handing the agent one question", () => {
   function sessionWithFindings(count: number) {
     const { fullSession, context } = setup();
@@ -504,5 +778,66 @@ describe("a failed review after the claims changed", () => {
     expect(kept.consistencyReview?.findings.map((finding) => finding.findingId)).toEqual([
       findingId,
     ]);
+  });
+
+  it("drops an already-offered restatement_mismatch too, unlike every other category, so a claim correction it resolved is never shown as still pending", () => {
+    const { fullSession, context, apply } = setup();
+    const session = fullSession();
+    const roles = session.claims.find((claim) => claim.field === "roles");
+    const authorization = session.claims.find((claim) => claim.field === "authorization");
+    if (roles === undefined || authorization === undefined) throw new Error("fixture missing");
+
+    const merged = mergeConsistencyAnalysis(
+      session,
+      {
+        findings: [
+          {
+            priorFindingId: null,
+            category: "restatement_mismatch",
+            targetField: "authorization",
+            relatedClaimIds: [roles.claimId, authorization.claimId],
+            question: "The roles and authorization fields disagree. Which is right?",
+          },
+        ],
+        resolvedPriorFindingIds: [],
+      },
+      context,
+    );
+    if (!merged.ok) throw new Error(merged.reason);
+    const findingId = merged.session.consistencyReview?.findings[0]?.findingId ?? "";
+    const offered = markConsistencyQuestionOffered(merged.session, findingId, context);
+    expect(pendingMismatchClaims(offered).length).toBeGreaterThan(0);
+
+    // The person's answer resolves the disagreement: both claims are corrected to agree. A
+    // re-review is now due (the claims changed), but suppose it fails or times out.
+    const corrected = apply(
+      apply(offered, {
+        kind: "correct",
+        createdByType: "agent",
+        claimId: roles.claimId,
+        statement: "The Finance Director approves refunds of $2,000 or more.",
+        note: null,
+        effectiveDate: null,
+        sourceMessageId: session.messages[0]?.id ?? "",
+      }).session,
+      {
+        kind: "correct",
+        createdByType: "agent",
+        claimId: authorization.claimId,
+        statement: "Managers up to $2,000, and above that the Finance Director.",
+        note: null,
+        effectiveDate: null,
+        sourceMessageId: session.messages[0]?.id ?? "",
+      },
+    ).session;
+    expect(needsConsistencyReview(corrected)).toBe(true);
+
+    const kept = keepConsistencyReviewForCurrentClaims(corrected, context);
+    // The rebased review is now "current" again, so a stale carried finding would otherwise be
+    // shown as pending with the corrected (already-agreeing) text, misleadingly implying it is
+    // still unresolved.
+    expect(currentConsistencyReview(kept)).not.toBeNull();
+    expect(pendingMismatchClaims(kept)).toEqual([]);
+    expect(sopSessionSchema.safeParse(kept).success).toBe(true);
   });
 });

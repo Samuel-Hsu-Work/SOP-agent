@@ -3,9 +3,9 @@ import { identifierSchema, timestampSchema } from "./claim.ts";
 import { SOP_FIELD_NAMES } from "./sopFields.ts";
 
 /**
- * The kinds of omission a consistency review looks for. Fixed, so a log line or a test can name one
- * and a model cannot invent a new kind. Each is about how the recorded claims relate to one
- * another, which no per-field check can see.
+ * The kinds of problem a consistency review looks for: four kinds of omission and one kind of
+ * disagreement. Fixed, so a log line or a test can name one and a model cannot invent a new kind.
+ * Each is about how the recorded claims relate to one another, which no per-field check can see.
  */
 export const CONSISTENCY_CATEGORIES = [
   /** A role or an authorization tier the claims mention, that no procedure step reaches. */
@@ -16,6 +16,13 @@ export const CONSISTENCY_CATEGORIES = [
   "deadline_without_consequence",
   /** A threshold or a term too vague for a reader to act on. */
   "imprecise_threshold_or_term",
+  /**
+   * One rule stated in two or more claims with a different value, boundary or deciding role, so a
+   * reader would act differently depending on which one they read. Not restricted to one field: two
+   * things the person said are never compared by `detectConflicts.ts` (it only pairs a document
+   * claim against another source), so a same-field pair of spoken claims can disagree unnoticed too.
+   */
+  "restatement_mismatch",
 ] as const;
 
 export type ConsistencyCategory = (typeof CONSISTENCY_CATEGORIES)[number];
@@ -25,6 +32,17 @@ export const MAX_CONSISTENCY_FINDINGS = 4;
 export const MAX_CONSISTENCY_QUESTIONS_PER_SESSION = 4;
 export const MAX_CONSISTENCY_QUESTION_LENGTH = 300;
 export const MAX_RELATED_CLAIMS = 3;
+/** A restatement_mismatch names a disagreement, which needs at least two distinct sides. */
+export const MIN_CLAIMS_IN_A_MISMATCH = 2;
+/**
+ * The most of a claim's own wording repeated inside a `ConsistencyQuestion`'s `aboutClaims`. A
+ * claim's statement already appears once in the state item's own field list; this second copy is
+ * only so the agent does not have to cross-reference it, so it stays short enough (times up to
+ * `MAX_RELATED_CLAIMS`, and doubled for the rare turn where `consistencyQuestion` and
+ * `pendingMismatchClaims` both hold one) that it can never meaningfully compete with
+ * `STATE_ITEM_WRITE_MARGIN`.
+ */
+export const MAX_ABOUT_CLAIM_STATEMENT_LENGTH = 150;
 
 /**
  * Something the recorded claims do not say when read together, worded as one question. It is not a
@@ -42,6 +60,13 @@ export const consistencyFindingSchema = z.object({
   question: z.string().trim().min(1).max(MAX_CONSISTENCY_QUESTION_LENGTH),
   /** True once the agent was handed this question in a turn. Each finding is offered once. */
   wasOffered: z.boolean(),
+  /**
+   * The `offeredTotal` value this finding was offered at, or undefined if never offered. Higher is
+   * more recent: unlike array position, which the model's own returned order can reshuffle on any
+   * later merge, this is set once, only by `markConsistencyQuestionOffered`, and never changes
+   * again, so it is the one reliable way to find the single most recently offered finding.
+   */
+  offeredSequence: z.number().int().min(1).optional(),
 });
 
 export type ConsistencyFinding = z.infer<typeof consistencyFindingSchema>;

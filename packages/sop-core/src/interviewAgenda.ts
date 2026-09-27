@@ -1,6 +1,11 @@
 import type { Claim, ClaimStatus } from "./claim.ts";
 import { computeGaps } from "./computeGaps.ts";
-import { type ConsistencyQuestion, nextConsistencyQuestion } from "./consistencyReview.ts";
+import {
+  type ConsistencyQuestion,
+  type ConsistencyQuestionClaim,
+  nextConsistencyQuestion,
+  pendingMismatchClaims,
+} from "./consistencyReview.ts";
 import type { SopSession } from "./session.ts";
 import { getFieldDefinition, type SopFieldName } from "./sopFields.ts";
 import { quantitiesIn } from "./text.ts";
@@ -65,6 +70,12 @@ export interface InterviewAgenda {
    * question and never a fact: nothing is recorded because it exists.
    */
   consistencyQuestion: ConsistencyQuestion | null;
+  /**
+   * The claims of a `restatement_mismatch` already asked about but not yet resolved, so the agent
+   * can still correct them from the person's answer even once it is no longer `consistencyQuestion`
+   * (that only holds the newest not-yet-asked one). Empty when there is nothing pending.
+   */
+  pendingMismatchClaims: ConsistencyQuestionClaim[];
   /** True when no blocking gap remains. Only then may the agent say the SOP is ready to review. */
   readyToReview: boolean;
   blockingGapsRemaining: number;
@@ -144,6 +155,7 @@ export function buildInterviewAgenda(session: SopSession): InterviewAgenda {
     askNext,
     doNotAsk,
     consistencyQuestion: nextConsistencyQuestion(session),
+    pendingMismatchClaims: pendingMismatchClaims(session),
     readyToReview: report.blockingGapCount === 0,
     blockingGapsRemaining: report.blockingGapCount,
     advisoryGapsRemaining: report.advisoryGapCount,

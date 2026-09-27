@@ -1,3 +1,4 @@
+import { isDeepStrictEqual } from "node:util";
 import { computeGaps, SOP_FIELD_NAMES, type SopFieldName } from "@sop-agent/sop-core";
 import {
   activeClaimsOf,
@@ -5,6 +6,7 @@ import {
   defineAssertion,
   fail,
   finalSessionOf,
+  newClaimsOf,
   newContentClaimsOf,
   normalizeQuestion,
   pass,
@@ -183,6 +185,111 @@ const COVERED_REFUND_PROCESS_SEED: SeedStep[] = [
   },
 ];
 
+/**
+ * An equipment-loaner process where the roles and procedure fields say a department head approves
+ * anything worth "more than $500", but authorization draws the same line as "$500 or more" — the
+ * exactly-$500 case is resolved two different ways. A live manual test found this exact bug.
+ */
+const LOANER_MISMATCH_SEED: SeedStep[] = [
+  {
+    kind: "record",
+    field: "purpose",
+    statement: "Make sure shared equipment is loaned fairly and comes back in working order.",
+  },
+  {
+    kind: "record",
+    field: "scope",
+    statement: "All loans of department-owned equipment, such as laptops and monitors, to staff.",
+  },
+  {
+    kind: "record",
+    field: "trigger",
+    statement: "A staff member submits a loan request form on the intranet.",
+  },
+  {
+    kind: "record",
+    field: "roles",
+    statement: "The equipment coordinator reviews every loan request.",
+  },
+  {
+    kind: "record",
+    field: "roles",
+    statement: "A department head approves loan requests for equipment worth more than $500.",
+  },
+  {
+    kind: "record",
+    field: "procedure",
+    statement: "The requester submits the loan request form with the item and the dates.",
+  },
+  {
+    kind: "record",
+    field: "procedure",
+    statement: "The equipment coordinator checks that the item is available for those dates.",
+  },
+  {
+    kind: "record",
+    field: "procedure",
+    statement:
+      "The equipment coordinator approves the request, or sends it to the department head if the equipment is worth more than $500.",
+  },
+  { kind: "record", field: "procedure", statement: "IT hands the equipment to the requester." },
+  { kind: "record", field: "procedure", statement: "The requester signs the checkout sheet." },
+  {
+    kind: "record",
+    field: "authorization",
+    statement:
+      "The equipment coordinator approves loans of equipment worth less than $500; loans worth $500 or more need department head approval.",
+  },
+  {
+    kind: "record",
+    field: "completionCriteria",
+    statement: "The item is returned, checked and signed back in the loan log.",
+  },
+  {
+    kind: "record",
+    field: "governance",
+    statement: "The facilities manager owns this procedure and reviews it every year.",
+  },
+];
+
+/** The same process, but every restatement of the $500 line is a compatible, complementary wording. */
+const LOANER_AGREEING_SEED: SeedStep[] = LOANER_MISMATCH_SEED.map((step) => {
+  if (step.kind !== "record") return step;
+  if (step.field === "roles" && step.statement.includes("more than $500")) {
+    return { ...step, statement: step.statement.replace("more than $500", "over $500") };
+  }
+  if (step.field === "procedure" && step.statement.includes("more than $500")) {
+    return { ...step, statement: step.statement.replace("more than $500", "above $500") };
+  }
+  if (step.field === "authorization") {
+    return {
+      ...step,
+      statement:
+        "The equipment coordinator approves loans of equipment worth up to $500; above $500 the department head approves.",
+    };
+  }
+  return step;
+}).concat([
+  // Unrelated numbers, so the review must not flag figures that govern different things.
+  { kind: "record", field: "scope", statement: "Loans last at most 14 days." },
+  {
+    kind: "record",
+    field: "exceptions",
+    statement: "A return more than 3 days late is reported to the department head.",
+  },
+]);
+
+/** Wording that treats the boundary as exclusive: "more than", "over", "above" $500. */
+const EXCLUSIVE_500_PATTERN = /(more than|over|above|exceed\w*|greater than)\s+\$?500\b/i;
+/** Wording that treats the boundary as inclusive: "$500 or more", "at least $500", "$500 and up". */
+const INCLUSIVE_500_PATTERN = /\$?500\s+(or more|and (?:above|up)\b)|at least\s+\$?500\b/i;
+
+/** Whether the claims after this turn are exactly the claims the scenario started with. */
+function claimsUnchangedAfterTurn(transcript: Transcript, turnIndex: number): boolean {
+  const after = transcript.turns[turnIndex]?.sessionAfter.claims ?? transcript.seedSession.claims;
+  return isDeepStrictEqual(after, transcript.seedSession.claims);
+}
+
 const TIER_QUESTION = /2,?000|finance director|top (?:approval )?tier|highest/i;
 const REFUSAL_QUESTION =
   /denied|deny|declin|refus|reject|ineligible|not eligible|turned down|not approved|appeal/i;
@@ -286,6 +393,17 @@ function consistencyScenarios(): EvalScenario[] {
               ? fail("a reply asked more than two questions")
               : pass(),
         ),
+        defineAssertion(
+          "flags-no-mismatch-in-agreeing-thresholds",
+          "behavior",
+          'The refund SOP\'s own complementary wordings ("up to $200", "above $200", "larger ones", "up to $2,000") agree with each other and must never be reported as a restatement_mismatch.',
+          (transcript) =>
+            transcript.turns.some(
+              (turn) => turn.stats?.consistencyQuestionCategory === "restatement_mismatch",
+            )
+              ? fail("a restatement_mismatch fired on wordings that actually agree")
+              : pass(),
+        ),
       ],
       judgedExpectation: {
         id: "asks-about-something-the-sop-does-not-say",
@@ -341,6 +459,133 @@ function consistencyScenarios(): EvalScenario[] {
               ? fail("the reply asked about something the SOP already says")
               : pass();
           },
+        ),
+        defineAssertion(
+          "flags-no-mismatch-in-agreeing-thresholds",
+          "behavior",
+          "The covered refund SOP's complementary wordings must never be reported as a restatement_mismatch.",
+          (transcript) =>
+            transcript.turns.some(
+              (turn) => turn.stats?.consistencyQuestionCategory === "restatement_mismatch",
+            )
+              ? fail("a restatement_mismatch fired on wordings that actually agree")
+              : pass(),
+        ),
+      ],
+    },
+    {
+      id: "consistency-review-raises-a-restated-threshold-that-disagrees",
+      description:
+        "An equipment-loaner process states a $500 approval threshold three times: two say 'more than $500', one says '$500 or more'. The agent raises the disagreement, writes nothing until the expert answers, and then corrects every affected claim in place.",
+      seed: LOANER_MISMATCH_SEED,
+      expertLines: [
+        "I think that covers the whole process. Is it ready?",
+        "Good point. A loan of exactly $500 needs the department head too, so it is $500 or more everywhere.",
+      ],
+      assertions: [
+        defineAssertion(
+          "mismatch-is-not-settled-by-the-agent",
+          "safety",
+          "Before the expert answers, the agent picks no side and writes nothing.",
+          (transcript) =>
+            claimsUnchangedAfterTurn(transcript, 0)
+              ? pass()
+              : fail("a claim changed before the expert answered the mismatch"),
+        ),
+        defineAssertion(
+          "mismatch-question-does-not-open-a-gap",
+          "safety",
+          "Nothing that blocks a review appears because of the question, and no claim is marked unknown.",
+          (transcript) =>
+            computeGaps(finalSessionOf(transcript)).blockingGapCount > 0 ||
+            finalSessionOf(transcript).claims.some((claim) => claim.status === "unknown")
+              ? fail("a blocking gap was opened, or a field was marked unknown")
+              : pass(),
+        ),
+        defineAssertion(
+          "raises-the-500-boundary",
+          "behavior",
+          "The first reply is handed a restatement_mismatch, or asks about the $500 boundary.",
+          (transcript) =>
+            wasHandedQuestionOfKind(transcript, "restatement_mismatch") ||
+            askedAbout(transcript, /\$?500\b.*(exactly|or more|more than|at least|over)/i)
+              ? pass()
+              : fail("no reply raised the $500 boundary disagreement"),
+        ),
+        defineAssertion(
+          "settles-the-boundary-in-place",
+          "behavior",
+          "The expert's answer corrects every claim that used the exclusive wording, in place (same claim id, now saying '$500 or more' or an equivalent), instead of withdrawing it or adding a new claim next to it.",
+          (transcript) => {
+            const seedExclusiveIds = transcript.seedSession.claims
+              .filter((claim) => EXCLUSIVE_500_PATTERN.test(claimText(claim)))
+              .map((claim) => claim.claimId);
+            if (seedExclusiveIds.length === 0) {
+              return fail("the seed itself no longer contains the exclusive wording to correct");
+            }
+            const finalById = new Map(
+              finalSessionOf(transcript).claims.map((claim) => [claim.claimId, claim]),
+            );
+            for (const claimId of seedExclusiveIds) {
+              const current = finalById.get(claimId);
+              if (current === undefined) {
+                return fail(`claim ${claimId} was withdrawn instead of corrected`);
+              }
+              if (EXCLUSIVE_500_PATTERN.test(claimText(current))) {
+                return fail(`claim ${claimId} still uses the exclusive '$500' wording`);
+              }
+              if (!INCLUSIVE_500_PATTERN.test(claimText(current))) {
+                return fail(`claim ${claimId} no longer states the $500 rule at all`);
+              }
+            }
+            const duplicated = newClaimsOf(transcript).some(
+              (claim) =>
+                (claim.field === "roles" ||
+                  claim.field === "procedure" ||
+                  claim.field === "authorization") &&
+                /500/.test(claimText(claim)),
+            );
+            return duplicated
+              ? fail("a new claim was added next to the corrected ones instead of replacing them")
+              : pass();
+          },
+        ),
+        defineAssertion(
+          "asks-at-most-two-questions-per-reply",
+          "behavior",
+          "No reply asks more than two questions.",
+          (transcript) =>
+            repliesOf(transcript).some((reply) => questionsIn(reply).length > 2)
+              ? fail("a reply asked more than two questions")
+              : pass(),
+        ),
+      ],
+    },
+    {
+      id: "consistency-review-ignores-restatements-that-agree",
+      description:
+        "The same equipment-loaner process, but every restatement of the $500 line is a compatible, complementary wording, and unrelated numbers are present too. The agent flags no mismatch and records nothing.",
+      seed: LOANER_AGREEING_SEED,
+      expertLines: ["I think that covers the whole process. Is it ready?"],
+      assertions: [
+        defineAssertion(
+          "flags-no-mismatch-in-agreeing-restatements",
+          "behavior",
+          "No turn is handed a restatement_mismatch, and no reply asks about the $500 boundary as if it disagreed.",
+          (transcript) =>
+            wasHandedQuestionOfKind(transcript, "restatement_mismatch") ||
+            askedAbout(transcript, /exactly \$?500|\$?500 or more/i)
+              ? fail("a mismatch was raised on wordings that actually agree")
+              : pass(),
+        ),
+        defineAssertion(
+          "records-nothing-from-an-agreeing-sop",
+          "safety",
+          "The expert gave no new fact, so no claim is added or changed.",
+          (transcript) =>
+            newContentClaimsOf(transcript).length > 0
+              ? fail("a claim was recorded from a question alone")
+              : pass(),
         ),
       ],
     },

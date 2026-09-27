@@ -1,6 +1,7 @@
 import {
   applyClaim,
   type ClaimWriteCommand,
+  CONSISTENCY_CATEGORIES,
   type ConsistencyAnalysisOutput,
   type SopFieldName,
   type SopSession,
@@ -102,6 +103,31 @@ const findingAboutRoles: ScriptedExtractionStep = (request) => {
         targetField: "procedure",
         relatedClaimIds: roles === undefined ? [] : [roles.id],
         question: QUESTION,
+      },
+    ],
+    resolvedPriorFindingIds: [],
+  };
+  return output;
+};
+
+const MISMATCH_QUESTION =
+  "The roles and authorization fields disagree about the $2,000 boundary. Which is right?";
+
+/** A review that cites the "roles" and "authorization" claims as a restatement_mismatch. */
+const findingAboutRolesAndAuthorization: ScriptedExtractionStep = (request) => {
+  const input = JSON.parse(request.input) as { claims: { id: string; field: string }[] };
+  const roles = input.claims.find((claim) => claim.field === "roles");
+  const authorization = input.claims.find((claim) => claim.field === "authorization");
+  const output: ConsistencyAnalysisOutput = {
+    findings: [
+      {
+        priorFindingId: null,
+        category: "restatement_mismatch",
+        targetField: "authorization",
+        relatedClaimIds: [roles?.id, authorization?.id].filter(
+          (id): id is string => id !== undefined,
+        ),
+        question: MISMATCH_QUESTION,
       },
     ],
     resolvedPriorFindingIds: [],
@@ -289,6 +315,36 @@ describe("the consistency review inside a turn", () => {
     expect(result.stats.inputTokens).toBeGreaterThanOrEqual(100);
   });
 
+  it("hands the agent a restatement_mismatch with each related claim's field and wording", async () => {
+    const { fullSession, run } = setup();
+    const before = fullSession();
+    const { client, promise } = run(
+      [textStep("Anything else?")],
+      [findingAboutRolesAndAuthorization],
+      before,
+    );
+    const result = await promise;
+
+    const question = stateOf(client.requests[0]?.stateItem).consistencyQuestion as {
+      category: string;
+      aboutClaims: { id: string; field: string; statement: string }[];
+    };
+    expect(question.category).toBe("restatement_mismatch");
+    expect(question.aboutClaims.map((claim) => claim.field).sort()).toEqual([
+      "authorization",
+      "roles",
+    ]);
+    expect(question.aboutClaims.map((claim) => claim.statement)).toEqual([
+      "The Finance Director approves refunds above $2,000.",
+      "Managers up to $2,000, and above that the Finance Director.",
+    ]);
+
+    // A finding is not a claim: the claims are exactly what they were, before the user answers.
+    expect(result.session.claims).toEqual(before.claims);
+    expect(result.stats.consistencyQuestionCategory).toBe("restatement_mismatch");
+    expect(JSON.stringify(result.stats)).not.toContain("Finance Director");
+  });
+
   it("passes on an abort instead of treating it as a failed review", async () => {
     const { fullSession, run } = setup();
     const controller = new AbortController();
@@ -336,5 +392,20 @@ describe("what the review model is given", () => {
     expect(INSTRUCTIONS).toContain("consistencyQuestion");
     expect(INSTRUCTIONS).toContain("Never record your own answer to it");
     expect(INSTRUCTIONS).toContain("do not mark a field unknown because of one");
+  });
+
+  it("gives every category a bullet, and no longer claims a contradiction is handled elsewhere", () => {
+    for (const category of CONSISTENCY_CATEGORIES) {
+      expect(CONSISTENCY_REVIEW_INSTRUCTIONS).toContain(`${category}:`);
+    }
+    expect(CONSISTENCY_REVIEW_INSTRUCTIONS).not.toContain("handled elsewhere");
+  });
+
+  it("tells the agent how to read a restatement_mismatch and what to do once it is answered", () => {
+    expect(INSTRUCTIONS).toContain("aboutClaims");
+    expect(INSTRUCTIONS).not.toContain("aboutClaimIds");
+    expect(INSTRUCTIONS).toContain("restatement_mismatch");
+    expect(INSTRUCTIONS).toContain("pendingMismatchClaims");
+    expect(INSTRUCTIONS).toContain("call correct_claim on each claim there");
   });
 });

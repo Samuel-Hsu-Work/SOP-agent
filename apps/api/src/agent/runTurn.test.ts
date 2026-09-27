@@ -1,6 +1,7 @@
 import {
   applyClaim,
   type ClaimWriteCommand,
+  consistencyBasisOf,
   MAX_ASSISTANT_MESSAGE_LENGTH,
   MAX_IDENTIFIER_LENGTH,
   MAX_TOOL_CALLS_PER_MESSAGE,
@@ -27,6 +28,7 @@ import {
   withdrawClaimCall,
 } from "../testing/fakeModelClient.ts";
 import {
+  buildStateItem,
   INSTRUCTIONS,
   MAX_STATE_ITEM_LENGTH,
   measureStateItem,
@@ -784,6 +786,205 @@ describe("runAgentTurn: the state size limit", () => {
       session,
     ).promise;
     expect(result.session.claims).toHaveLength(session.claims.length - 1);
+  });
+
+  it("drops pendingMismatchClaims, not consistencyQuestion, when both together would push a near-full state past the limit", () => {
+    const { messageId, seedRecord, getSession } = setup();
+    // Every blocking field must be filled: nextConsistencyQuestion (unlike pendingMismatchClaims)
+    // is refused while any blocking gap remains, and this test needs it populated.
+    for (const field of [
+      "purpose",
+      "scope",
+      "trigger",
+      "roles",
+      "procedure",
+      "authorization",
+      "completionCriteria",
+      "governance",
+    ] as const) {
+      seedRecord(field, `About ${field}.`);
+    }
+    const source = {
+      type: "employee_statement" as const,
+      reference: { kind: "message" as const, messageId },
+    };
+    // Six near-worst-case claims: three for an already-offered (pending) mismatch, three for the
+    // next one about to be offered, each id padded to the schema's own declared maximum so this
+    // proves the guarantee against the true worst case, not just today's UUID length.
+    const longClaims = Array.from({ length: 6 }, (_, index) =>
+      buildClaim({
+        claimId: `mismatch-claim-${index}`.padEnd(MAX_IDENTIFIER_LENGTH, "-"),
+        field: "scope",
+        value: { kind: "statement", text: `Claim ${index}: `.padEnd(160, "x") },
+        source,
+      }),
+    );
+    const ids = longClaims.map((claim) => claim.claimId);
+    const [a = "", b = "", c = "", d = "", e = "", f = ""] = ids;
+    const consistencyReview = {
+      basis: "placeholder", // recomputed below, once the final claim set is known
+      checkedAt: "2026-01-01T00:00:00.000Z",
+      offeredTotal: 1,
+      findings: [
+        {
+          findingId: "pending-finding".padEnd(MAX_IDENTIFIER_LENGTH, "-"),
+          category: "restatement_mismatch" as const,
+          targetField: "scope" as const,
+          relatedClaimIds: [a, b, c],
+          question: "Q".repeat(300),
+          wasOffered: true,
+          offeredSequence: 1,
+        },
+        {
+          findingId: "next-finding".padEnd(MAX_IDENTIFIER_LENGTH, "-"),
+          category: "restatement_mismatch" as const,
+          targetField: "scope" as const,
+          relatedClaimIds: [d, e, f],
+          question: "R".repeat(300),
+          wasOffered: false,
+        },
+      ],
+    };
+
+    const withFiller = (fillerCount: number): SopSession => {
+      const filler = Array.from({ length: fillerCount }, (_, index) =>
+        buildClaim({
+          claimId: `filler-${index}`.padEnd(MAX_IDENTIFIER_LENGTH, "-"),
+          field: "evidence",
+          value: { kind: "statement", text: `${index}-`.padEnd(70, "x") },
+          source,
+        }),
+      );
+      const session: SopSession = {
+        ...getSession(),
+        claims: [...getSession().claims, ...longClaims, ...filler],
+      };
+      return {
+        ...session,
+        consistencyReview: { ...consistencyReview, basis: consistencyBasisOf(session) },
+      };
+    };
+
+    // Grow the base session, a claim at a time, until the fallback is actually forced to engage
+    // (proving the scenario is real, not just comfortably under the limit already), then confirm
+    // the guarantee holds at that exact point. A session this repo already treats as too large to
+    // begin a turn on (over MAX_STATE_ITEM_LENGTH before any consistency data is even added) would
+    // mean this test setup itself is broken, not the guarantee, so that is asserted against too.
+    let session = withFiller(0);
+    for (let fillerCount = 0; fillerCount <= 600; fillerCount += 1) {
+      session = withFiller(fillerCount);
+      const stateItem = buildStateItem({ session, allowToolCalls: true });
+      const match = /<sop_state>(.*)<\/sop_state>/s.exec(stateItem);
+      if (match?.[1] === undefined) throw new Error("no state block");
+      const state = JSON.parse(match[1]) as {
+        consistencyQuestion: { findingId: string } | null;
+        pendingMismatchClaims: unknown[];
+      };
+      if (state.pendingMismatchClaims.length === 0) {
+        // The fallback engaged: verify it did so correctly, and that the guarantee it exists for
+        // actually holds.
+        expect(stateItem.length).toBeLessThanOrEqual(MAX_STATE_ITEM_LENGTH);
+        expect(state.consistencyQuestion?.findingId).toBe(
+          "next-finding".padEnd(MAX_IDENTIFIER_LENGTH, "-"),
+        );
+        return;
+      }
+    }
+    throw new Error(
+      "the fallback never engaged even after 600 filler claims; test setup is broken",
+    );
+  });
+
+  it("drops a freshly offered consistencyQuestion's own aboutClaims when there is no pendingMismatchClaims left to drop first", () => {
+    const { messageId, seedRecord, getSession } = setup();
+    for (const field of [
+      "purpose",
+      "scope",
+      "trigger",
+      "roles",
+      "procedure",
+      "authorization",
+      "completionCriteria",
+      "governance",
+    ] as const) {
+      seedRecord(field, `About ${field}.`);
+    }
+    const source = {
+      type: "employee_statement" as const,
+      reference: { kind: "message" as const, messageId },
+    };
+    // Three near-worst-case claims for the one finding this test exercises: it has never been
+    // offered, so pendingMismatchClaims is always empty and cannot be dropped first — the only
+    // remaining source of overshoot is the fresh consistencyQuestion's own aboutClaims.
+    const longClaims = Array.from({ length: 3 }, (_, index) =>
+      buildClaim({
+        claimId: `mismatch-claim-${index}`.padEnd(MAX_IDENTIFIER_LENGTH, "-"),
+        field: "scope",
+        value: { kind: "statement", text: `Claim ${index}: `.padEnd(160, "x") },
+        source,
+      }),
+    );
+    const relatedClaimIds = longClaims.map((claim) => claim.claimId);
+    const consistencyReview = {
+      basis: "placeholder", // recomputed below, once the final claim set is known
+      checkedAt: "2026-01-01T00:00:00.000Z",
+      offeredTotal: 0,
+      findings: [
+        {
+          findingId: "fresh-finding".padEnd(MAX_IDENTIFIER_LENGTH, "-"),
+          category: "restatement_mismatch" as const,
+          targetField: "scope" as const,
+          relatedClaimIds,
+          question: "Q".repeat(300),
+          wasOffered: false,
+        },
+      ],
+    };
+
+    const withFiller = (fillerCount: number): SopSession => {
+      const filler = Array.from({ length: fillerCount }, (_, index) =>
+        buildClaim({
+          claimId: `filler-${index}`.padEnd(MAX_IDENTIFIER_LENGTH, "-"),
+          field: "evidence",
+          value: { kind: "statement", text: `${index}-`.padEnd(70, "x") },
+          source,
+        }),
+      );
+      const session: SopSession = {
+        ...getSession(),
+        claims: [...getSession().claims, ...longClaims, ...filler],
+      };
+      return {
+        ...session,
+        consistencyReview: { ...consistencyReview, basis: consistencyBasisOf(session) },
+      };
+    };
+
+    let session = withFiller(0);
+    for (let fillerCount = 0; fillerCount <= 600; fillerCount += 1) {
+      session = withFiller(fillerCount);
+      const stateItem = buildStateItem({ session, allowToolCalls: true });
+      const match = /<sop_state>(.*)<\/sop_state>/s.exec(stateItem);
+      if (match?.[1] === undefined) throw new Error("no state block");
+      const state = JSON.parse(match[1]) as {
+        consistencyQuestion: { findingId: string; aboutClaims: unknown[] } | null;
+        pendingMismatchClaims: unknown[];
+      };
+      if (
+        state.consistencyQuestion !== null &&
+        state.consistencyQuestion.aboutClaims.length === 0
+      ) {
+        expect(stateItem.length).toBeLessThanOrEqual(MAX_STATE_ITEM_LENGTH);
+        expect(state.consistencyQuestion.findingId).toBe(
+          "fresh-finding".padEnd(MAX_IDENTIFIER_LENGTH, "-"),
+        );
+        expect(state.pendingMismatchClaims).toEqual([]);
+        return;
+      }
+    }
+    throw new Error(
+      "the fallback never engaged even after 600 filler claims; test setup is broken",
+    );
   });
 });
 

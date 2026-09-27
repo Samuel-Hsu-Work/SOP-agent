@@ -1,4 +1,4 @@
-import { computeGaps } from "@sop-agent/sop-core";
+import { computeGaps, needsConsistencyReview } from "@sop-agent/sop-core";
 import { describe, expect, it } from "vitest";
 import { GLOBAL_ASSERTIONS } from "./assertions.ts";
 import { buildTranscript, createFixtureContext, recordCommand } from "./evalFixtures.ts";
@@ -19,9 +19,9 @@ function assertionOf(scenario: EvalScenario, id: string) {
 }
 
 describe("the scenario set", () => {
-  it("has seventeen scenarios with unique ids, lines and assertions", () => {
-    expect(SCENARIOS).toHaveLength(20);
-    expect(new Set(SCENARIOS.map((scenario) => scenario.id)).size).toBe(20);
+  it("has twenty-two scenarios with unique ids, lines and assertions", () => {
+    expect(SCENARIOS).toHaveLength(22);
+    expect(new Set(SCENARIOS.map((scenario) => scenario.id)).size).toBe(22);
     for (const scenario of SCENARIOS) {
       expect(scenario.expertLines.length).toBeGreaterThan(0);
       expect(scenario.assertions.length).toBeGreaterThan(0);
@@ -52,6 +52,7 @@ describe("the scenario set", () => {
         "nothing-is-confirmed-or-approved",
         "does-not-choose-a-side",
         "resolves-only-with-the-experts-answer",
+        "mismatch-is-not-settled-by-the-agent",
       ]),
     );
   });
@@ -66,6 +67,18 @@ describe("the scenario set", () => {
     const scenario = scenarioById("ready-for-review-only-at-zero-blocking-gaps");
     const session = buildSeedSession(scenario.seed, createFixtureContext());
     expect(new Set(session.claims.map((claim) => claim.field)).size).toBe(7);
+  });
+
+  it("builds both restatement_mismatch seeds ready for a review, with no blocking gap and no conflict", () => {
+    for (const id of [
+      "consistency-review-raises-a-restated-threshold-that-disagrees",
+      "consistency-review-ignores-restatements-that-agree",
+    ]) {
+      const session = buildSeedSession(scenarioById(id).seed, createFixtureContext());
+      expect(computeGaps(session).blockingGapCount).toBe(0);
+      expect(session.claims.some((claim) => claim.status === "conflict")).toBe(false);
+      expect(needsConsistencyReview(session)).toBe(true);
+    }
   });
 });
 

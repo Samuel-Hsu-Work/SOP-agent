@@ -4,10 +4,12 @@ import {
   type ConsistencyAnalysisOutput,
   type ConsistencyFinding,
   type ConsistencyReview,
+  MAX_ABOUT_CLAIM_STATEMENT_LENGTH,
   MAX_CONSISTENCY_FINDINGS,
   MAX_CONSISTENCY_QUESTION_LENGTH,
   MAX_CONSISTENCY_QUESTIONS_PER_SESSION,
   MAX_RELATED_CLAIMS,
+  MIN_CLAIMS_IN_A_MISMATCH,
 } from "./consistencyReviewSchema.ts";
 import type { SopSession } from "./session.ts";
 import type { SopFieldName } from "./sopFields.ts";
@@ -115,12 +117,50 @@ export function needsConsistencyReview(session: SopSession): boolean {
   return currentConsistencyReview(session) === null;
 }
 
+/** One claim a consistency question is about, as it reads now. */
+export interface ConsistencyQuestionClaim {
+  id: string;
+  field: SopFieldName;
+  statement: string;
+}
+
+/**
+ * A claim's own statement, repeated here for the agent's convenience: it already appears once in
+ * the state item's field list, so this copy is capped well under the full claim-text limit rather
+ * than repeated in full, up to `MAX_RELATED_CLAIMS` times, on top of it.
+ */
+function statementForAboutClaims(text: string): string {
+  return text.length > MAX_ABOUT_CLAIM_STATEMENT_LENGTH
+    ? `${text.slice(0, MAX_ABOUT_CLAIM_STATEMENT_LENGTH - 1)}…`
+    : text;
+}
+
+/** Resolves a finding's related claim ids to their current field and statement, dropping any gone since. */
+function aboutClaimsOf(
+  relatedClaimIds: readonly string[],
+  claimsById: ReadonlyMap<string, Claim>,
+): ConsistencyQuestionClaim[] {
+  return relatedClaimIds.flatMap((claimId): ConsistencyQuestionClaim[] => {
+    const claim = claimsById.get(claimId);
+    return claim === undefined
+      ? []
+      : [
+          {
+            id: claim.claimId,
+            field: claim.field,
+            statement: statementForAboutClaims(claim.value?.text ?? ""),
+          },
+        ];
+  });
+}
+
 export interface ConsistencyQuestion {
   findingId: string;
   category: ConsistencyFinding["category"];
   field: SopFieldName;
   question: string;
-  aboutClaimIds: string[];
+  /** The claims the question is about, in the order the review cited them, each with its field. */
+  aboutClaims: ConsistencyQuestionClaim[];
 }
 
 /**
@@ -136,13 +176,52 @@ export function nextConsistencyQuestion(session: SopSession): ConsistencyQuestio
 
   const finding = review.findings.find((candidate) => !candidate.wasOffered);
   if (finding === undefined) return null;
+  const claimsById = new Map(
+    statedClaimsInReadingOrder(session).map((claim) => [claim.claimId, claim]),
+  );
   return {
     findingId: finding.findingId,
     category: finding.category,
     field: finding.targetField,
     question: finding.question,
-    aboutClaimIds: finding.relatedClaimIds,
+    aboutClaims: aboutClaimsOf(finding.relatedClaimIds, claimsById),
   };
+}
+
+/**
+ * The claims of the most recently offered `restatement_mismatch` that is not yet resolved, so the
+ * agent can still correct them once the person answers — even on a later turn, once
+ * `nextConsistencyQuestion` has moved on (its `wasOffered` flag only stops the same question from
+ * being asked again; unlike a `conflict`-status claim, which stays visibly unsettled until
+ * resolved, an offered finding would otherwise vanish from the state the very next turn, which is
+ * normally exactly when the person answers it). Only the single most recent one, not every offered
+ * mismatch ever, for two reasons together: it bounds the size this can add to the state item (one
+ * finding's claims, not up to `MAX_CONSISTENCY_FINDINGS` of them at once), and it bounds how long a
+ * mismatch the person dismissed without a claim change (there is deliberately no separate dismissal
+ * action, matching decision 55) can keep being offered as context — only until a newer one
+ * supersedes it, not forever. A finding disappears from here on its own, sooner, once a later
+ * review reports the claims now agree, because `mergeConsistencyAnalysis` then removes it from
+ * `review.findings` entirely.
+ *
+ * "Most recent" is decided by `offeredSequence`, not by position in `review.findings`: the model's
+ * own returned order (which decides that array's order on every merge) is never guaranteed to put a
+ * newly offered finding after an older one, so array position cannot reliably stand in for time.
+ */
+export function pendingMismatchClaims(session: SopSession): ConsistencyQuestionClaim[] {
+  const review = currentConsistencyReview(session);
+  if (review === null) return [];
+  const finding = review.findings
+    .filter((candidate) => candidate.category === "restatement_mismatch" && candidate.wasOffered)
+    .reduce<ConsistencyFinding | undefined>((latest, candidate) => {
+      const candidateSequence = candidate.offeredSequence ?? 0;
+      const latestSequence = latest?.offeredSequence ?? 0;
+      return candidateSequence >= latestSequence ? candidate : latest;
+    }, undefined);
+  if (finding === undefined) return [];
+  const claimsById = new Map(
+    statedClaimsInReadingOrder(session).map((claim) => [claim.claimId, claim]),
+  );
+  return aboutClaimsOf(finding.relatedClaimIds, claimsById);
 }
 
 export type MergeConsistencyResult =
@@ -161,6 +240,8 @@ export type MergeConsistencyResult =
  * input, names an earlier finding twice or one that does not exist, or leaves an earlier finding
  * unaccounted for: a finding never disappears without the model saying it is answered. It also
  * refuses an output over the limits on counts and lengths, which the output schema does not state.
+ * A `restatement_mismatch` needs at least two distinct claims (a disagreement has two sides) and a
+ * `targetField` that is one of those claims' own fields.
  */
 export function mergeConsistencyAnalysis(
   session: SopSession,
@@ -182,7 +263,10 @@ export function mergeConsistencyAnalysis(
   ) {
     return { ok: false, reason: "A finding was too long." };
   }
-  const statedIds = new Set(statedClaimsInReadingOrder(session).map((claim) => claim.claimId));
+  const statedById = new Map(
+    statedClaimsInReadingOrder(session).map((claim) => [claim.claimId, claim]),
+  );
+  const statedIds = new Set(statedById.keys());
   const prior = session.consistencyReview?.findings ?? [];
   const priorById = new Map(prior.map((finding) => [finding.findingId, finding]));
 
@@ -205,18 +289,40 @@ export function mergeConsistencyAnalysis(
     if (candidate.relatedClaimIds.some((claimId) => !statedIds.has(claimId))) {
       return { ok: false, reason: "The review cited a claim it was not given." };
     }
+    if (candidate.category === "restatement_mismatch") {
+      const distinctClaimIds = new Set(candidate.relatedClaimIds);
+      if (distinctClaimIds.size < MIN_CLAIMS_IN_A_MISMATCH) {
+        return { ok: false, reason: "A mismatch named fewer than two claims." };
+      }
+      const citedFields = new Set(
+        candidate.relatedClaimIds.flatMap((claimId) => {
+          const claim = statedById.get(claimId);
+          return claim === undefined ? [] : [claim.field];
+        }),
+      );
+      if (!citedFields.has(candidate.targetField)) {
+        return { ok: false, reason: "A mismatch pointed at a field none of its claims is in." };
+      }
+    }
     const question = candidate.question.trim();
     if (question === "") return { ok: false, reason: "The review returned an empty question." };
     const earlier =
       candidate.priorFindingId === null ? undefined : priorById.get(candidate.priorFindingId);
+    // A carried finding keeps its offered state only while it is still the same kind of problem:
+    // a reworded question about the same category is not asked again, but a category change means
+    // the person was never actually asked about *this* concern, so it must be treated as new, or
+    // it could silently never reach the person (carried as "already offered" under the new
+    // category while also being read back as stale pending context by anything that filters on
+    // the new category, e.g. `pendingMismatchClaims` for `restatement_mismatch`).
+    const carriesSameCategory = earlier !== undefined && earlier.category === candidate.category;
     findings.push({
       findingId: earlier?.findingId ?? context.newId(),
       category: candidate.category,
       targetField: candidate.targetField,
       relatedClaimIds: candidate.relatedClaimIds,
       question,
-      // A question already put to the person is not put again because it was reworded.
-      wasOffered: earlier?.wasOffered ?? false,
+      wasOffered: carriesSameCategory ? earlier.wasOffered : false,
+      offeredSequence: carriesSameCategory ? earlier.offeredSequence : undefined,
     });
   }
 
@@ -254,14 +360,17 @@ export function markConsistencyQuestionOffered(
   if (review === null || review === undefined || finding === undefined || finding.wasOffered) {
     return session;
   }
+  const offeredSequence = Math.min(review.offeredTotal + 1, MAX_CONSISTENCY_QUESTIONS_PER_SESSION);
   return {
     ...session,
     updatedAt: context.now(),
     consistencyReview: {
       ...review,
-      offeredTotal: Math.min(review.offeredTotal + 1, MAX_CONSISTENCY_QUESTIONS_PER_SESSION),
+      offeredTotal: offeredSequence,
       findings: review.findings.map((candidate) =>
-        candidate.findingId === findingId ? { ...candidate, wasOffered: true } : candidate,
+        candidate.findingId === findingId
+          ? { ...candidate, wasOffered: true, offeredSequence }
+          : candidate,
       ),
     },
   };
@@ -274,6 +383,16 @@ export function markConsistencyQuestionOffered(
  * to the person stay, so a later successful review can carry them on. A finding still waiting is
  * dropped: it was written for claims that have since changed, and the person may have answered it or
  * removed what it was about.
+ *
+ * A `restatement_mismatch` is dropped here even if it was already offered, unlike every other
+ * category: `pendingMismatchClaims` re-reads its related claims' text fresh from the session on
+ * every turn, not from a stored snapshot of what they said when it was offered, so carrying it
+ * forward under the rebased (current) basis would keep presenting it as an unresolved pending
+ * mismatch indefinitely — including after the person's own correction already resolved it — for as
+ * long as the review keeps failing. No other category has an equivalent post-offer exposure (once
+ * offered, they simply leave the state for good), so only this one needs the extra care. If the
+ * disagreement is still genuinely unresolved, a later successful review discovers it again on its
+ * own, as a fresh finding.
  */
 export function keepConsistencyReviewForCurrentClaims(
   session: SopSession,
@@ -286,7 +405,9 @@ export function keepConsistencyReviewForCurrentClaims(
     consistencyReview: {
       basis: consistencyBasisOf(session),
       checkedAt: timestamp,
-      findings: (session.consistencyReview?.findings ?? []).filter((finding) => finding.wasOffered),
+      findings: (session.consistencyReview?.findings ?? []).filter(
+        (finding) => finding.wasOffered && finding.category !== "restatement_mismatch",
+      ),
       offeredTotal: session.consistencyReview?.offeredTotal ?? 0,
     },
   };
