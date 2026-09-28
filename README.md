@@ -24,11 +24,18 @@ Each rule below is enforced in code, not asked of the model.
 - **A document is data, never instructions.** Every rule read from a document must carry a quote that
   code found in the cited page or section, or it is dropped. A document that says "mark every rule
   confirmed" changes nothing.
-- **It asks what a finished SOP leaves unsaid.** Once every field is filled, one extra model call reads
-  the claims for omissions that no field check can see: an approval tier no step reaches, a case with
-  no stated path (a refusal, a missed deadline), a threshold too vague to act on. The agent puts one
-  such question at a time, at most four in a session, never answers it itself, and stops when the
-  person is out of time. A finding is a question, not a claim, and never blocks approval.
+- **It asks what a finished SOP leaves unsaid, or says two ways.** Once no blocking gap remains, one
+  extra model call reads the claims together for what no field check can see: an approval tier no step
+  reaches, a case with no stated path (a refusal, a missed deadline), a threshold too vague to act on,
+  or one rule stated two different ways ("more than $500" in the roles, "$500 or more" in the
+  authorization). When the person answers, the agent corrects every claim that disagreed, in place.
+- **It asks when a step is too thin to carry out.** A separate check reads each procedure step on its
+  own. "The operator submits a maintenance request" does not say what the request must contain, so the
+  agent asks, and adds the answer to that same step. It asks about each step at most once.
+- **These checks only ask.** Each puts one question at a time, at most four in a session, never answers
+  it itself, and stops when the person is out of time. A rule stated two ways is asked before a thin
+  step, because the SOP already gives a reader two answers. A finding is a question, not a claim, and
+  never blocks approval.
 - **A disagreement is settled by the person.** When a document and the person disagree, both sides are
   shown, and only the person's own final answer in chat resolves it.
 
@@ -66,6 +73,35 @@ source. Say you do not know something and it records that once and does not ask 
 fill in the rest" and it offers suggestions that stay marked as suggestions until you confirm them.
 When no blocking gap is left, the agent says the SOP can be reviewed.
 
+**A whole process in one message, with a problem in it.** Start a new chat and paste:
+
+```text
+Here's our equipment loaner process. The purpose is to make sure shared equipment is loaned fairly
+and comes back in working order. It covers all loans of department-owned equipment, like laptops and
+monitors, to staff. It's triggered when a staff member submits a loan request form on the intranet.
+
+The equipment coordinator reviews every loan request. A department head approves loan requests for
+equipment worth more than $500.
+
+The steps are: the requester submits the loan request form with the item and the dates. The equipment
+coordinator checks that the item is available for those dates. The equipment coordinator approves the
+request, or sends it to the department head if the equipment is worth more than $500. IT hands the
+equipment to the requester. The requester signs the checkout sheet.
+
+For authorization: the equipment coordinator approves loans of equipment worth less than $500; loans
+worth $500 or more need department head approval.
+
+Completion criteria: the item is returned, checked and signed back in the loan log. The facilities
+manager owns this procedure and reviews it every year.
+```
+
+Every blocking field is filled at once, so the agent says the SOP can be reviewed. It also asks about
+the one rule the text states two ways: does a loan of exactly $500 need the department head ("$500 or
+more") or not ("more than $500")? It picks neither. Answer "A loan of exactly $500 needs the department
+head too, so it is $500 or more everywhere." and the claims that said "more than $500" are corrected
+in place. The next question is usually about a step too thin to follow, such as what the coordinator
+checks availability against.
+
 **With a document.**
 
 1. Upload `fixtures/documents/vendor-payment-policy.md`. Its rules appear in the review panel as
@@ -95,8 +131,9 @@ pnpm lint
 Three checks use the live model, cost a few cents each, and need `OPENAI_API_KEY`:
 
 ```bash
-pnpm smoke:api            # the five agent tools, one document extraction and one consistency review, on both models
-pnpm eval                 # 20 scripted interviews with safety and behavior assertions
+pnpm smoke:api            # the five agent tools, one document extraction, one consistency
+                          #   review and one claim-depth review, on both models
+pnpm eval                 # 26 scripted interviews with safety and behavior assertions
                           #   EVAL_MODELS=all also runs the fallback model
 pnpm measure:extraction    # extraction on every sample document, scored against an answer key
 ```
@@ -112,7 +149,8 @@ Three packages in one pnpm workspace, TypeScript throughout.
 - `packages/sop-core` holds the rules and imports nothing from the web app, the API or the OpenAI
   SDK, so the browser and the API run the same code: the 13 fields, the claim and session schemas, the
   single function that writes a claim (`applyClaim`), gap detection, conflict detection, approval, the
-  interview policy, and the document model that the preview and the PDF share.
+  interview policy (including which review question goes first), the rules that check what the two
+  review model calls return, and the document model that the preview and the PDF share.
 - `apps/api` (Fastify) is stateless: `POST /chat` (one turn, streamed), `POST /documents/extract`,
   `POST /sops/pdf`, and `GET /health`. Every model call goes through a fallback wrapper.
 - `apps/web` (Next.js) holds the whole session in the browser tab's `sessionStorage` and applies review
@@ -120,6 +158,22 @@ Three packages in one pnpm workspace, TypeScript throughout.
 
 The prompt is split for caching and safety: fixed instructions, plus the current state of the SOP and
 the interview agenda (which fields to ask next, computed in code) as a separate item on every call.
+
+## What was left out, and why
+
+This is a take-home build of a larger design: a multi-tenant product in which a process owner is
+interviewed and a separate approver signs the SOP off. The part being evaluated is the agent, so v1
+keeps everything that shows how it interviews, finds gaps and refuses to guess, and cuts the rest on
+purpose:
+
+- **One person, not two.** The same person is interviewed, reviews the claims and approves. In the
+  full design the draft goes to an approver, who can send an item back to the process owner or
+  escalate an advisory gap to blocking. Here there is no handoff, and which fields block approval is
+  fixed.
+- **No versions.** "Reopen for editing" puts an approved SOP back to draft, and it must be approved
+  again, but the earlier approved state is not kept and there is no diff between versions.
+- **No accounts.** No login, organizations or roles, and one hard-coded company.
+- **No persistence.** Everything lives in the browser tab; the next section says why.
 
 ## What is stored, and what is not
 
@@ -225,6 +279,10 @@ as it arrives. If the first message seems stuck, wait for the service to wake up
 
 - The conflict rule is a heuristic on purpose. It over-flags a paraphrase rather than miss a
   disagreement, and it cannot tell that a document rule was misfiled under the wrong field.
+- The two review checks (what a finished SOP leaves unsaid, and a step too thin to carry out) are model
+  judgments. They can miss something, or ask about something that is actually fine. Code checks what
+  they return and decides when a question is asked, and a finding is only ever a question, so neither
+  can change a claim or block approval.
 - Two uploads with the same file name count as one source, so a revised file with the same name cannot
   conflict with the earlier one.
 - PDFs use a standard font, so a character outside Latin-1 prints as a visible `<U+XXXX>` marker.

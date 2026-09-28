@@ -19,9 +19,9 @@ function assertionOf(scenario: EvalScenario, id: string) {
 }
 
 describe("the scenario set", () => {
-  it("has twenty-four scenarios with unique ids, lines and assertions", () => {
-    expect(SCENARIOS).toHaveLength(24);
-    expect(new Set(SCENARIOS.map((scenario) => scenario.id)).size).toBe(24);
+  it("has twenty-six scenarios with unique ids, lines and assertions", () => {
+    expect(SCENARIOS).toHaveLength(26);
+    expect(new Set(SCENARIOS.map((scenario) => scenario.id)).size).toBe(26);
     for (const scenario of SCENARIOS) {
       expect(scenario.expertLines.length).toBeGreaterThan(0);
       expect(scenario.assertions.length).toBeGreaterThan(0);
@@ -69,10 +69,12 @@ describe("the scenario set", () => {
     expect(new Set(session.claims.map((claim) => claim.field)).size).toBe(7);
   });
 
-  it("builds both restatement_mismatch seeds ready for a review, with no blocking gap and no conflict", () => {
+  it("builds the review scenarios' seeds ready for a review, with no blocking gap and no conflict", () => {
     for (const id of [
       "consistency-review-raises-a-restated-threshold-that-disagrees",
       "consistency-review-ignores-restatements-that-agree",
+      "consistency-review-raises-a-missed-deadline-and-a-vague-threshold",
+      "claim-depth-review-asks-for-a-criterion-a-handoff-and-a-result",
     ]) {
       const session = buildSeedSession(scenarioById(id).seed, createFixtureContext());
       expect(computeGaps(session).blockingGapCount).toBe(0);
@@ -230,6 +232,99 @@ describe("scenario assertions", () => {
         }),
       ).pass,
     ).toBe(false);
+  });
+
+  it("the remaining-focus scenario passes only for that focus, asked, about the intended step", () => {
+    const scenario = scenarioById("claim-depth-review-asks-for-a-criterion-a-handoff-and-a-result");
+    const result = assertionOf(scenario, "asks-what-the-step-produces");
+    const handed = (focus: string, reply: string, stepPattern: RegExp) => {
+      const transcript = buildTranscript({ seed: scenario.seed, turns: [{ reply }] });
+      const [turn] = transcript.turns;
+      const target = turn?.sessionAfter.claims.find((claim) =>
+        stepPattern.test(claim.value?.text ?? ""),
+      );
+      if (turn === undefined || target === undefined) throw new Error("fixture missing");
+      return {
+        ...transcript,
+        turns: [
+          {
+            ...turn,
+            stats: { claimDepthQuestionFocus: focus } as never,
+            sessionAfter: {
+              ...turn.sessionAfter,
+              claimDepthReview: {
+                basis: "fixture",
+                checkedAt: turn.sessionAfter.updatedAt,
+                findings: [],
+                offeredTotal: 1,
+                askedClaimIds: [target.claimId],
+                lastOfferedClaimId: target.claimId,
+                lastOfferedClaimTextHash: null,
+              },
+            },
+          },
+        ],
+      };
+    };
+    const preparationStep = /prepares the accepted parts/;
+
+    expect(
+      result.check(handed("observable_result", "What is ready once it is done?", preparationStep))
+        .pass,
+    ).toBe(true);
+    // The right focus about a different step does not count.
+    expect(
+      result.check(handed("observable_result", "What does it produce?", /inspection report/)).pass,
+    ).toBe(false);
+    expect(
+      result.check(handed("destination_or_handoff", "Who receives it?", preparationStep)).pass,
+    ).toBe(false);
+    // Handed but not actually asked: the reply holds no question.
+    expect(result.check(handed("observable_result", "Recorded.", preparationStep)).pass).toBe(
+      false,
+    );
+  });
+
+  it("the remaining-kind scenarios' safety check catches a withdrawal or a stated claim marked unknown", () => {
+    const scenario = scenarioById("claim-depth-review-asks-for-a-criterion-a-handoff-and-a-result");
+    const recordsNothing = assertionOf(scenario, "records-nothing-from-a-question");
+    const seeded = buildTranscript({ seed: scenario.seed, turns: [] }).seedSession.claims;
+    const step = seeded.find((claim) =>
+      /prepares the accepted parts/.test(claim.value?.text ?? ""),
+    );
+    if (step === undefined) throw new Error("fixture missing");
+    const transcriptAfter = (command: Record<string, unknown>) =>
+      buildTranscript({
+        seed: scenario.seed,
+        turns: [{ reply: "Anything else?", commands: [command as never] }],
+      });
+
+    expect(
+      recordsNothing.check(
+        transcriptAfter({ kind: "withdraw", claimId: step.claimId, note: "Declined." }),
+      ).pass,
+    ).toBe(false);
+    expect(
+      recordsNothing.check(
+        transcriptAfter({
+          kind: "markUnknown",
+          field: "procedure",
+          claimId: step.claimId,
+          note: "Unsure.",
+        }),
+      ).pass,
+    ).toBe(false);
+    // Recording that an empty field is not known is the ordinary answer to "I don't know".
+    expect(
+      recordsNothing.check(
+        transcriptAfter({
+          kind: "markUnknown",
+          field: "evidence",
+          claimId: null,
+          note: "Not known.",
+        }),
+      ).pass,
+    ).toBe(true);
   });
 
   it("the unknown scenario catches a repeated question and a re-asked unknown", () => {
