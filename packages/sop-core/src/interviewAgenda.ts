@@ -85,10 +85,10 @@ export interface InterviewAgenda {
   /**
    * One procedure step judged operationally too thin to act on, put as a question, or null. Unlike
    * `consistencyQuestion`, it does not wait for every blocking gap to close first — a thin step is
-   * worth catching the moment it is stated. It comes before `consistencyQuestion` and `askNext`: it
-   * is about the thing the person just said, `consistencyQuestion` is about a relationship across
-   * the whole claim set found by a review that only starts once the interview is otherwise
-   * finished. It is a question and never a fact: nothing is recorded because it exists.
+   * worth catching the moment it is stated. It comes before `askNext` and before a
+   * `consistencyQuestion` about an omission, but it is withheld (see `selectReviewQuestions`)
+   * while the `consistencyQuestion` is a `restatement_mismatch`. It is a question and never a
+   * fact: nothing is recorded because it exists.
    */
   claimDepthQuestion: ClaimDepthQuestion | null;
   /**
@@ -101,6 +101,26 @@ export interface InterviewAgenda {
   readyToReview: boolean;
   blockingGapsRemaining: number;
   advisoryGapsRemaining: number;
+}
+
+/**
+ * The review questions that may be put to the person this turn. A `restatement_mismatch` outranks a
+ * claim-depth question: the SOP already gives a reader two different answers, which matters more
+ * than one step being thin, so the claim-depth question is withheld and stays waiting, unoffered,
+ * for a later turn. Any other consistency question still comes after a claim-depth question. The
+ * agenda and the turn's offered-question bookkeeping both use this, so what the model is shown and
+ * what is marked offered can never disagree.
+ */
+export function selectReviewQuestions(session: SopSession): {
+  consistencyQuestion: ConsistencyQuestion | null;
+  claimDepthQuestion: ClaimDepthQuestion | null;
+} {
+  const consistencyQuestion = nextConsistencyQuestion(session);
+  const claimDepthQuestion =
+    consistencyQuestion?.category === "restatement_mismatch"
+      ? null
+      : nextClaimDepthQuestion(session);
+  return { consistencyQuestion, claimDepthQuestion };
 }
 
 /**
@@ -172,12 +192,13 @@ export function buildInterviewAgenda(session: SopSession): InterviewAgenda {
       };
     });
 
+  const { consistencyQuestion, claimDepthQuestion } = selectReviewQuestions(session);
   return {
     askNext,
     doNotAsk,
-    consistencyQuestion: nextConsistencyQuestion(session),
+    consistencyQuestion,
     pendingMismatchClaims: pendingMismatchClaims(session),
-    claimDepthQuestion: nextClaimDepthQuestion(session),
+    claimDepthQuestion,
     pendingClaimDepthTarget: pendingClaimDepthTarget(session),
     readyToReview: report.blockingGapCount === 0,
     blockingGapsRemaining: report.blockingGapCount,

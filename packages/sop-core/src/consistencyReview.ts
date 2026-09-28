@@ -179,7 +179,11 @@ export function nextConsistencyQuestion(session: SopSession): ConsistencyQuestio
   if (statesOutOfTime(lastUserMessageText(session))) return null;
   if (review.offeredTotal >= MAX_CONSISTENCY_QUESTIONS_PER_SESSION) return null;
 
-  const finding = review.findings.find((candidate) => !candidate.wasOffered);
+  // A restatement_mismatch goes first whatever order the model returned the findings in: the SOP
+  // already gives a reader two different answers, and selectReviewQuestions relies on seeing it.
+  const unoffered = review.findings.filter((candidate) => !candidate.wasOffered);
+  const finding =
+    unoffered.find((candidate) => candidate.category === "restatement_mismatch") ?? unoffered[0];
   if (finding === undefined) return null;
   const claimsById = new Map(
     statedClaimsInReadingOrder(session).map((claim) => [claim.claimId, claim]),

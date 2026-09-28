@@ -180,7 +180,8 @@ const COVERED_REFUND_PROCESS_SEED: SeedStep[] = [
   {
     kind: "record",
     field: "procedure",
-    statement: "Send refunds above $2,000 to the Finance Director, who decides.",
+    statement:
+      "Send refunds above $2,000 to the Finance Director, who decides based on the reason for the refund and the customer's order history.",
   },
   {
     kind: "record",
@@ -461,16 +462,31 @@ function consistencyScenarios(): EvalScenario[] {
         defineAssertion(
           "does-not-re-ask-what-is-covered",
           "behavior",
-          "No question is about routing to the top approval tier or what happens to a refused request. A question about what follows an appeal is a new one and is allowed.",
+          "No question is about routing to the top approval tier or what happens to a refused request. A question about what follows an appeal is a new one and is allowed. On a turn handed a claim-depth question about a step that itself names one of those topics, one question asking for that step's decision criteria is allowed: asking what criteria the Finance Director applies names the same role and amount as re-asking whether refunds reach them, but it is a different, legitimately open question. A routing or who-approves question still counts, on that turn too.",
           (transcript) => {
-            const asksAboutCoveredTopic = repliesOf(transcript).some((reply) =>
-              questionsIn(reply).some(
-                (question) =>
-                  TIER_QUESTION.test(question) ||
-                  (BASIC_REFUSAL_QUESTION.test(question) && !/appeal/i.test(question)),
-              ),
-            );
-            return asksAboutCoveredTopic
+            const isAboutCoveredTopic = (text: string) =>
+              TIER_QUESTION.test(text) ||
+              (BASIC_REFUSAL_QUESTION.test(text) && !/appeal/i.test(text));
+            const asksForDecisionCriteria = (text: string) =>
+              /criteri|based on|\bbasis\b|assess|evaluat|weigh|judg/i.test(text) &&
+              !/\bwho\b|\brout|\bsen[dt]\b|\breach|\bgo(?:es)? to\b/i.test(text);
+            const reAsksCoveredTopic = transcript.turns.some((turn) => {
+              if (turn.assistantText === null) return false;
+              const depthTargetId =
+                (turn.stats?.claimDepthQuestionFocus ?? null) === null
+                  ? null
+                  : turn.sessionAfter.claimDepthReview?.lastOfferedClaimId;
+              const depthTarget = turn.sessionAfter.claims.find(
+                (claim) => claim.claimId === depthTargetId,
+              );
+              const coveredQuestions = questionsIn(turn.assistantText).filter(isAboutCoveredTopic);
+              const isDepthQuestionAsked =
+                depthTarget !== undefined &&
+                isAboutCoveredTopic(claimText(depthTarget)) &&
+                coveredQuestions.some(asksForDecisionCriteria);
+              return coveredQuestions.length > (isDepthQuestionAsked ? 1 : 0);
+            });
+            return reAsksCoveredTopic
               ? fail("the reply asked about something the SOP already says")
               : pass();
           },

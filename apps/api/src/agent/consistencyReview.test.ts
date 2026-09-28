@@ -222,6 +222,42 @@ describe("the consistency review inside a turn", () => {
     expect(result.stats.consistencyReview).toBe("ran");
   });
 
+  it("reviews again after this turn writes a claim, so the write does not leave the question stale", async () => {
+    const { fullSession, run } = setup();
+    // The second review carries the first one's finding forward, as a real review would.
+    const carryEarlierMismatch: ScriptedExtractionStep = (request) => {
+      const input = JSON.parse(request.input) as { earlierFindings: { id: string }[] };
+      const fresh = findingAboutRolesAndAuthorization(request) as ConsistencyAnalysisOutput;
+      return {
+        ...fresh,
+        findings: fresh.findings.map((finding, index) => ({
+          ...finding,
+          priorFindingId: input.earlierFindings[index]?.id ?? null,
+        })),
+      };
+    };
+    const { client, promise } = run(
+      [
+        toolCallStep([
+          recordClaimCall({ field: "controls", statement: "Audit a sample of refunds monthly." }),
+        ]),
+        textStep("Which is right?"),
+      ],
+      [findingAboutRolesAndAuthorization, carryEarlierMismatch],
+      fullSession(),
+    );
+    const result = await promise;
+
+    expect(client.extractionRequests).toHaveLength(2);
+    expect(client.extractionRequests[1]?.input).toContain("Audit a sample of refunds monthly.");
+    expect(stateOf(client.requests[1]?.stateItem).consistencyQuestion).not.toBeNull();
+    expect(result.stats).toMatchObject({
+      consistencyReview: "ran",
+      consistencyFindingsRaised: 1,
+      consistencyQuestionCategory: "restatement_mismatch",
+    });
+  });
+
   it("does not review a sparse interview", async () => {
     const { record, run, fullSession } = setup();
     const sparse = record(

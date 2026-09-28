@@ -3,6 +3,7 @@ import {
   CLAIM_DEPTH_FOCUSES,
   type ClaimDepthAnalysisOutput,
   type ClaimWriteCommand,
+  type ConsistencyAnalysisOutput,
   consistencyBasisOf,
   keepClaimDepthReviewForCurrentClaims,
   MAX_CLAIM_DEPTH_QUESTION_LENGTH,
@@ -131,6 +132,28 @@ const findingAboutTheStep: ScriptedExtractionStep = (request) => {
   return output;
 };
 
+/** A consistency review that cites the "roles" and "authorization" claims as a restatement_mismatch. */
+const mismatchBetweenRolesAndAuthorization: ScriptedExtractionStep = (request) => {
+  const input = JSON.parse(request.input) as { claims: { id: string; field: string }[] };
+  const relatedClaimIds = ["roles", "authorization"].flatMap((field) => {
+    const claim = input.claims.find((candidate) => candidate.field === field);
+    return claim === undefined ? [] : [claim.id];
+  });
+  const output: ConsistencyAnalysisOutput = {
+    findings: [
+      {
+        priorFindingId: null,
+        category: "restatement_mismatch",
+        targetField: "authorization",
+        relatedClaimIds,
+        question: "The roles and authorization fields disagree about the boundary. Which is right?",
+      },
+    ],
+    resolvedPriorFindingIds: [],
+  };
+  return output;
+};
+
 function stateOf(stateItem: string | undefined): Record<string, unknown> {
   const match = /<sop_state>(.*)<\/sop_state>/s.exec(stateItem ?? "");
   if (match?.[1] === undefined) throw new Error("no state block");
@@ -174,12 +197,14 @@ describe("the claim-depth review inside a turn", () => {
         toolCallStep(BLOCKING.map(([field, statement]) => recordClaimCall({ field, statement }))),
         textStep("Recorded."),
       ],
-      [findingAboutTheStep],
+      // Recording every blocking field also makes the consistency review due this same turn; it
+      // runs after the claim-depth review and finds nothing.
+      [findingAboutTheStep, () => ({ findings: [], resolvedPriorFindingIds: [] })],
       emptySession,
     );
     const result = await promise;
 
-    expect(client.extractionRequests).toHaveLength(1);
+    expect(client.extractionRequests).toHaveLength(2);
     const reviewed = JSON.parse(client.extractionRequests[0]?.input ?? "{}") as {
       candidates: { statement: string }[];
     };
@@ -488,18 +513,28 @@ describe("the claim-depth review inside a turn", () => {
     await expect(promise).rejects.toThrow();
   });
 
-  it("skips the consistency-review call entirely when a fresh claim-depth question already fired this turn", async () => {
+  it("still runs the consistency review when a claim-depth question is waiting, and asks a restatement_mismatch it finds first", async () => {
     const { fullSession, run } = setup();
-    // Only one extraction step is scripted: if the consistency review were also attempted, the
-    // fake client would push a second request and throw "ran out of steps" inside it (caught,
-    // fail-open) — this asserts that call is never made at all, not merely that it fails quietly.
+    // No consistency review on file yet, so this turn needs one alongside the claim-depth review.
+    const needingBothReviews: SopSession = { ...fullSession(), consistencyReview: null };
     const { client, promise } = run(
-      [textStep("Anything else?")],
-      [findingAboutTheStep],
-      fullSession(),
+      [textStep("Which is right?")],
+      [findingAboutTheStep, mismatchBetweenRolesAndAuthorization],
+      needingBothReviews,
     );
-    await promise;
-    expect(client.extractionRequests).toHaveLength(1);
+    const result = await promise;
+
+    expect(client.extractionRequests).toHaveLength(2);
+    const state = stateOf(client.requests[0]?.stateItem);
+    expect(state.claimDepthQuestion).toBeNull();
+    expect((state.consistencyQuestion as { category: string }).category).toBe(
+      "restatement_mismatch",
+    );
+    expect(result.stats.consistencyQuestionCategory).toBe("restatement_mismatch");
+    expect(result.stats.claimDepthQuestionFocus).toBeNull();
+    // The withheld claim-depth finding was never put to the person, so it keeps its one-time offer.
+    expect(result.session.claimDepthReview?.findings).toHaveLength(1);
+    expect(result.session.claimDepthReview?.offeredTotal).toBe(0);
   });
 
   it("defers an existing unoffered consistency question instead of silently consuming it, when a claim-depth question takes priority", async () => {

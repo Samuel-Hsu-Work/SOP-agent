@@ -436,6 +436,25 @@ describe("restatement_mismatch", () => {
     expect(merged.ok).toBe(true);
   });
 
+  it("offers a mismatch before an omission, whatever order the model returned them in", () => {
+    const { fullSession, context } = setup();
+    const session = fullSession();
+    const [rolesId, authorizationId] = twoDistinctClaimIds(session);
+    const omission = OUTPUT_WITH_ONE_FINDING([]).findings[0];
+    const mismatch = MISMATCH_OUTPUT([rolesId, authorizationId]).findings[0];
+    if (omission === undefined || mismatch === undefined) throw new Error("fixture missing");
+    const merged = mergeConsistencyAnalysis(
+      session,
+      { findings: [omission, mismatch], resolvedPriorFindingIds: [] },
+      context,
+    );
+    if (!merged.ok) throw new Error(merged.reason);
+    expect(merged.session.consistencyReview?.findings[0]?.category).not.toBe(
+      "restatement_mismatch",
+    );
+    expect(nextConsistencyQuestion(merged.session)?.category).toBe("restatement_mismatch");
+  });
+
   it("gives the agent each related claim's field and current wording, in citation order", () => {
     const { fullSession, context } = setup();
     const session = fullSession();

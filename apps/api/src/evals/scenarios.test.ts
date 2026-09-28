@@ -164,6 +164,74 @@ describe("scenario assertions", () => {
     expect(assertionOf(scenario, "says-it-is-a-suggestion").check(labelled).pass).toBe(true);
   });
 
+  it("the covered-refund scenario allows a claim-depth question about a covered step, but not a re-ask beside it", () => {
+    const scenario = scenarioById("consistency-questions-skip-what-the-sop-already-covers");
+    const reAsk = assertionOf(scenario, "does-not-re-ask-what-is-covered");
+    const onDepthTurn = (reply: string) => {
+      const transcript = buildTranscript({ seed: scenario.seed, turns: [{ reply }] });
+      const [turn] = transcript.turns;
+      const target = turn?.sessionAfter.claims.find((claim) =>
+        /Finance Director, who decides/.test(claim.value?.text ?? ""),
+      );
+      if (turn === undefined || target === undefined) throw new Error("fixture missing");
+      return {
+        ...transcript,
+        turns: [
+          {
+            ...turn,
+            stats: { claimDepthQuestionFocus: "condition_or_criterion" } as never,
+            sessionAfter: {
+              ...turn.sessionAfter,
+              claimDepthReview: {
+                basis: "fixture",
+                checkedAt: turn.sessionAfter.updatedAt,
+                findings: [],
+                offeredTotal: 1,
+                askedClaimIds: [target.claimId],
+                lastOfferedClaimId: target.claimId,
+                lastOfferedClaimTextHash: null,
+              },
+            },
+          },
+        ],
+      };
+    };
+    const depthQuestion =
+      "For refunds above $2,000, what criteria does the Finance Director apply?";
+
+    expect(reAsk.check(onDepthTurn(depthQuestion)).pass).toBe(true);
+    expect(
+      reAsk.check(
+        onDepthTurn(`${depthQuestion} Do refunds above $2,000 reach the Finance Director?`),
+      ).pass,
+    ).toBe(false);
+    // A depth turn does not excuse a lone re-ask that is not the depth question itself, even one
+    // that uses the word "decide" or "criteria".
+    expect(
+      reAsk.check(onDepthTurn("Do refunds above $2,000 reach the Finance Director?")).pass,
+    ).toBe(false);
+    expect(
+      reAsk.check(
+        onDepthTurn(
+          "How does the Finance Director decide who should approve refunds above $2,000?",
+        ),
+      ).pass,
+    ).toBe(false);
+    expect(
+      reAsk.check(
+        onDepthTurn("By what criteria are refunds above $2,000 sent to the Finance Director?"),
+      ).pass,
+    ).toBe(false);
+    expect(
+      reAsk.check(
+        buildTranscript({
+          seed: scenario.seed,
+          turns: [{ reply: "Who approves refunds above $2,000?" }],
+        }),
+      ).pass,
+    ).toBe(false);
+  });
+
   it("the unknown scenario catches a repeated question and a re-asked unknown", () => {
     const scenario = scenarioById("unknown-is-recorded-once-and-answered-in-place");
     const repeats = buildTranscript({

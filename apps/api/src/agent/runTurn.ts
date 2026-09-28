@@ -5,6 +5,7 @@ import {
   type ConsistencyCategory,
   type ConsistencyQuestion,
   claimDepthBasisOf,
+  consistencyBasisOf,
   currentClaimDepthReview,
   currentConsistencyReview,
   keepClaimDepthReviewForCurrentClaims,
@@ -15,10 +16,9 @@ import {
   markConsistencyQuestionOffered,
   needsClaimDepthReview,
   needsConsistencyReview,
-  nextClaimDepthQuestion,
-  nextConsistencyQuestion,
   type RecordedToolCall,
   type SopSession,
+  selectReviewQuestions,
   sopSessionSchema,
   type ToolOutcomeErrorCode,
   type WriteContext,
@@ -194,7 +194,10 @@ export async function runAgentTurn(input: RunAgentTurnInput): Promise<RunAgentTu
   // retrying forever: a rebase that had to be skipped for size (see below) still records what was
   // attempted, so that specific candidate set is not retried again this same turn either.
   let lastAttemptedClaimDepthBasis: string | null = null;
-  let hasTriedConsistencyReview = false;
+  // The same for the consistency review: a claim this turn writes after the review ran leaves that
+  // review stale, and a stale review offers nothing, so a review made before a write would
+  // otherwise lose its question (a restatement_mismatch included) on every turn that writes.
+  let lastAttemptedConsistencyBasis: string | null = null;
   let offeredQuestion: ConsistencyQuestion | null = null;
   let offeredDepthQuestion: ClaimDepthQuestion | null = null;
 
@@ -259,17 +262,11 @@ export async function runAgentTurn(input: RunAgentTurnInput): Promise<RunAgentTu
         if (stats.claimDepthReview !== "ran") stats.claimDepthReview = "failed";
       }
     }
-    offeredDepthQuestion = nextClaimDepthQuestion(working);
-
-    // A fresh claim-depth question always outranks a consistency question (see prompt.ts), so a
-    // consistency-review call that would just lose that priority fight this turn is not worth its
-    // cost — skipped entirely, not merely hidden once made.
-    if (
-      offeredDepthQuestion === null &&
-      !hasTriedConsistencyReview &&
-      needsConsistencyReview(working)
-    ) {
-      hasTriedConsistencyReview = true;
+    // Run even when a claim-depth question is already waiting: only this review can find a
+    // restatement_mismatch, and a mismatch outranks a claim-depth question (selectReviewQuestions).
+    const consistencyBasisNow = consistencyBasisOf(working);
+    if (consistencyBasisNow !== lastAttemptedConsistencyBasis && needsConsistencyReview(working)) {
+      lastAttemptedConsistencyBasis = consistencyBasisNow;
       const review = await runConsistencyReview({
         client,
         model,
@@ -281,16 +278,20 @@ export async function runAgentTurn(input: RunAgentTurnInput): Promise<RunAgentTu
       stats.inputTokens += review.inputTokens;
       stats.cachedInputTokens += review.cachedInputTokens;
       stats.outputTokens += review.outputTokens;
+      // As with the claim-depth review: "ran" sticks once any attempt this turn succeeded, and the
+      // raised count is summed, since a later attempt carries earlier findings rather than raising
+      // them again.
       if (review.status === "ran") {
         working = review.session;
         stats.consistencyReview = "ran";
-        stats.consistencyFindingsRaised = review.raisedCount;
+        stats.consistencyFindingsRaised += review.raisedCount;
       } else {
         working = keepConsistencyReviewForCurrentClaims(working, context);
-        stats.consistencyReview = "failed";
+        if (stats.consistencyReview !== "ran") stats.consistencyReview = "failed";
       }
     }
-    offeredQuestion = nextConsistencyQuestion(working);
+    ({ claimDepthQuestion: offeredDepthQuestion, consistencyQuestion: offeredQuestion } =
+      selectReviewQuestions(working));
 
     const stateItem = buildStateItem({ session: working, allowToolCalls });
     stats.stateItemChars = stateItem.length;
@@ -388,10 +389,11 @@ export async function runAgentTurn(input: RunAgentTurnInput): Promise<RunAgentTu
   }
 
   // The last step's state item carried the question, so it counts as asked once, whatever the reply
-  // says. Only one of the two is ever marked: the prompt tells the agent to ask the depth question
-  // first when both are present (see prompt.ts), so a consistency question that lost that priority
-  // fight was never actually put to the person this turn, and must not silently consume its
-  // one-time offer — it stays available to be asked, and marked offered, on a later turn instead.
+  // says. Only one of the two is ever marked: when both are present the prompt tells the agent to
+  // ask the depth question first (a restatement_mismatch never shares the state with one, see
+  // selectReviewQuestions), so a consistency question that lost that priority fight was never
+  // actually put to the person this turn, and must not silently consume its one-time offer — it
+  // stays available to be asked, and marked offered, on a later turn instead.
   if (offeredDepthQuestion !== null) {
     working = markClaimDepthQuestionOffered(working, offeredDepthQuestion.findingId, context);
     stats.claimDepthQuestionFocus = offeredDepthQuestion.focus;
