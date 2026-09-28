@@ -1,4 +1,10 @@
 import type { Claim, ClaimStatus } from "./claim.ts";
+import {
+  type ClaimDepthQuestion,
+  nextClaimDepthQuestion,
+  type PendingClaimDepthTarget,
+  pendingClaimDepthTarget,
+} from "./claimDepthReview.ts";
 import { computeGaps } from "./computeGaps.ts";
 import {
   type ConsistencyQuestion,
@@ -76,6 +82,21 @@ export interface InterviewAgenda {
    * (that only holds the newest not-yet-asked one). Empty when there is nothing pending.
    */
   pendingMismatchClaims: ConsistencyQuestionClaim[];
+  /**
+   * One procedure step judged operationally too thin to act on, put as a question, or null. Unlike
+   * `consistencyQuestion`, it does not wait for every blocking gap to close first — a thin step is
+   * worth catching the moment it is stated. It comes before `consistencyQuestion` and `askNext`: it
+   * is about the thing the person just said, `consistencyQuestion` is about a relationship across
+   * the whole claim set found by a review that only starts once the interview is otherwise
+   * finished. It is a question and never a fact: nothing is recorded because it exists.
+   */
+  claimDepthQuestion: ClaimDepthQuestion | null;
+  /**
+   * The target of the most recently offered `claimDepthQuestion`, so the agent can still correct it
+   * from the person's answer even once it is no longer `claimDepthQuestion` (that only holds the
+   * newest not-yet-asked one). Null when there is nothing pending.
+   */
+  pendingClaimDepthTarget: PendingClaimDepthTarget | null;
   /** True when no blocking gap remains. Only then may the agent say the SOP is ready to review. */
   readyToReview: boolean;
   blockingGapsRemaining: number;
@@ -156,6 +177,8 @@ export function buildInterviewAgenda(session: SopSession): InterviewAgenda {
     doNotAsk,
     consistencyQuestion: nextConsistencyQuestion(session),
     pendingMismatchClaims: pendingMismatchClaims(session),
+    claimDepthQuestion: nextClaimDepthQuestion(session),
+    pendingClaimDepthTarget: pendingClaimDepthTarget(session),
     readyToReview: report.blockingGapCount === 0,
     blockingGapsRemaining: report.blockingGapCount,
     advisoryGapsRemaining: report.advisoryGapCount,

@@ -64,11 +64,31 @@ function setup() {
       sourceMessageId: messageId,
       insertBeforeClaimId: null,
     });
-  const fullSession = () =>
-    BLOCKING.reduce(
+  const fullSession = () => {
+    const session = BLOCKING.reduce(
       (current, [field, statement]) => record(current, field, statement),
       created.session,
     );
+    // This file exercises the consistency review only; the claim-depth review is a separate
+    // mechanism with its own test file, so its procedure candidates are pre-marked "already asked"
+    // here, keeping it from making a call of its own that would otherwise consume a scripted
+    // extraction step meant for the consistency review.
+    const askedClaimIds = session.claims
+      .filter((claim) => claim.field === "procedure")
+      .map((claim) => claim.claimId);
+    return {
+      ...session,
+      claimDepthReview: {
+        basis: "not under test",
+        checkedAt: session.updatedAt,
+        findings: [],
+        offeredTotal: askedClaimIds.length,
+        askedClaimIds,
+        lastOfferedClaimId: null,
+        lastOfferedClaimTextHash: null,
+      },
+    };
+  };
 
   const run = (
     steps: ScriptedStep[],
@@ -109,6 +129,12 @@ const findingAboutRoles: ScriptedExtractionStep = (request) => {
   };
   return output;
 };
+
+/** A claim-depth review that reports nothing, so a test can prove it ran without it interfering. */
+const NO_DEPTH_FINDINGS: ScriptedExtractionStep = () => ({
+  findings: [],
+  resolvedPriorFindingIds: [],
+});
 
 const MISMATCH_QUESTION =
   "The roles and authorization fields disagree about the $2,000 boundary. Which is right?";
@@ -177,14 +203,16 @@ describe("the consistency review inside a turn", () => {
         toolCallStep(BLOCKING.map(([field, statement]) => recordClaimCall({ field, statement }))),
         textStep("Recorded."),
       ],
-      [findingAboutRoles],
+      // The claim-depth review becomes eligible in the same step (its own procedure candidates
+      // now exist) and runs first, so its own call comes before the consistency review's.
+      [NO_DEPTH_FINDINGS, findingAboutRoles],
       emptySession,
     );
     const result = await promise;
 
     // The first step ran while blocking gaps remained, so there was nothing to review yet.
-    expect(client.extractionRequests).toHaveLength(1);
-    const reviewed = JSON.parse(client.extractionRequests[0]?.input ?? "{}") as {
+    expect(client.extractionRequests).toHaveLength(2);
+    const reviewed = JSON.parse(client.extractionRequests[1]?.input ?? "{}") as {
       claims: { text: string }[];
     };
     expect(reviewed.claims.map((claim) => claim.text)).toContain(
@@ -390,8 +418,8 @@ describe("what the review model is given", () => {
 
   it("tells the agent a consistency question is a question, and never to answer it itself", () => {
     expect(INSTRUCTIONS).toContain("consistencyQuestion");
-    expect(INSTRUCTIONS).toContain("Never record your own answer to it");
-    expect(INSTRUCTIONS).toContain("do not mark a field unknown because of one");
+    expect(INSTRUCTIONS).toContain("Never record your own answer to either");
+    expect(INSTRUCTIONS).toContain("do not mark a field or a step unknown because of one");
   });
 
   it("gives every category a bullet, and no longer claims a contradiction is handled elsewhere", () => {

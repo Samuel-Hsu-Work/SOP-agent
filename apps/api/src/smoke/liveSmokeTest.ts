@@ -10,9 +10,11 @@
  */
 import {
   applyClaim,
+  claimDepthAnalysisOutputSchema,
   computeGaps,
   consistencyAnalysisOutputSchema,
   createEmptySession,
+  mergeClaimDepthAnalysis,
   mergeConsistencyAnalysis,
   type SopFieldName,
   type SopSession,
@@ -20,6 +22,12 @@ import {
   type UserMessage,
 } from "@sop-agent/sop-core";
 import OpenAI from "openai";
+import {
+  CLAIM_DEPTH_REVIEW_INSTRUCTIONS,
+  CLAIM_DEPTH_REVIEW_MAX_OUTPUT_TOKENS,
+  CLAIM_DEPTH_REVIEW_TIMEOUT_MS,
+  renderClaimDepthReviewInput,
+} from "../agent/claimDepthReview.ts";
 import {
   CONSISTENCY_REVIEW_INSTRUCTIONS,
   CONSISTENCY_REVIEW_MAX_OUTPUT_TOKENS,
@@ -329,6 +337,94 @@ for (const model of models) {
     }
     console.log(
       `  ${merged.session.consistencyReview?.findings.length ?? 0} finding(s) | tokens ${result.inputTokens} in, ${result.outputTokens} out`,
+    );
+  } catch (error) {
+    failures += 1;
+    const detail =
+      error instanceof OpenAI.APIError
+        ? `${error.name} (${error.status}): ${error.message}`
+        : error instanceof Error
+          ? `${error.name}: ${error.message}`
+          : String(error);
+    console.log(`\nFAIL  ${label}\n  ${detail}`);
+  }
+}
+
+/**
+ * One claim-depth review per model, called directly (not through the fail-open wrapper) so that a
+ * schema the provider refuses, or output that does not hold up against the session, shows here
+ * instead of quietly turning the feature off. The seed's one procedure step is deliberately thin,
+ * in a domain different from the consistency review's own seed above, so this exercises the
+ * review actually finding something rather than only running successfully.
+ */
+const DEPTH_SEED: [SopFieldName, string][] = [
+  ["purpose", "Keep every repair traceable."],
+  ["scope", "All maintenance requests for line equipment."],
+  ["trigger", "An operator notices a fault."],
+  ["roles", "The maintenance supervisor assigns a technician."],
+  ["procedure", "The operator submits a maintenance request."],
+  ["authorization", "The supervisor approves any repair over $1,000."],
+  ["completionCriteria", "The technician confirms the machine runs normally."],
+  ["governance", "The plant manager owns this and reviews it yearly."],
+];
+
+for (const model of models) {
+  const label = `${model} | reviews a procedure step for what it leaves unsaid`;
+  try {
+    const context = systemWriteContext;
+    const messageId = context.newId();
+    let session: SopSession = {
+      ...createEmptySession(context),
+      messages: [
+        {
+          id: messageId,
+          role: "user",
+          createdAt: context.now(),
+          text: "Here is the whole process.",
+        },
+      ],
+    };
+    for (const [field, statement] of DEPTH_SEED) {
+      const written = applyClaim(
+        session,
+        {
+          kind: "record",
+          createdByType: "agent",
+          field,
+          status: "observed",
+          statement,
+          note: null,
+          effectiveDate: null,
+          sourceMessageId: messageId,
+          insertBeforeClaimId: null,
+        },
+        context,
+      );
+      if (!written.ok) throw new Error(`seed failed: ${written.error.code}`);
+      session = written.session;
+    }
+    const result = await client.runStructuredOutput({
+      model,
+      instructions: CLAIM_DEPTH_REVIEW_INSTRUCTIONS,
+      input: renderClaimDepthReviewInput(session),
+      schema: claimDepthAnalysisOutputSchema,
+      schemaName: "claim_depth_review",
+      maxOutputTokens: CLAIM_DEPTH_REVIEW_MAX_OUTPUT_TOKENS,
+      signal: AbortSignal.timeout(CLAIM_DEPTH_REVIEW_TIMEOUT_MS),
+    });
+    const merged = mergeClaimDepthAnalysis(session, result.output, context);
+    if (!merged.ok) throw new Error(`the review did not hold up: ${merged.reason}`);
+    // The seeded step is deliberately thin, so a healthy run always raises at least one finding —
+    // an empty result here means the model or the instructions stopped catching it at all.
+    if (merged.session.claimDepthReview?.findings.length === 0) {
+      throw new Error("expected at least one finding for the deliberately thin seeded step");
+    }
+    console.log(`\nPASS  ${label}`);
+    for (const finding of merged.session.claimDepthReview?.findings ?? []) {
+      console.log(`  ${finding.focus} -> ${finding.targetClaimId}: ${finding.question}`);
+    }
+    console.log(
+      `  ${merged.session.claimDepthReview?.findings.length ?? 0} finding(s) | tokens ${result.inputTokens} in, ${result.outputTokens} out`,
     );
   } catch (error) {
     failures += 1;

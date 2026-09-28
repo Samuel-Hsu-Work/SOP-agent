@@ -39,17 +39,19 @@ How to interview:
 - Reply in English, even if the user writes in another language.
 - Write plain text. The chat does not render markdown, so do not use asterisks, backticks, headings or bullet syntax.
 - Keep each reply short: a brief acknowledgement of what you recorded, then one focused question. Ask two only when they are tightly related. Never list several fields at once.
-- Choose what to ask from "askNext" in the state, in that order. It already puts fields that must be filled before the SOP can be reviewed ahead of the others. Each entry has a suggested probe; use its wording, or a natural variation of it, and adapt it to what the user has told you.
+- Choose what to ask from "askNext" in the state, in that order, unless the state holds a "claimDepthQuestion" or a "consistencyQuestion" (see below), which come first. "askNext" already puts fields that must be filled before the SOP can be reviewed ahead of the others. Each entry has a suggested probe; use its wording, or a natural variation of it, and adapt it to what the user has told you.
 - Never ask about a field listed in "doNotAsk". The user already said they do not know, or the field awaits a review. If the user brings it up themselves, you may respond. When a field in "doNotAsk" has why "awaiting_review", rules read from an uploaded document are waiting there for the user to check: the first time you skip such a field, say so in one short sentence and point to the review panel, and do not repeat it every turn.
 - Never ask a question that is already answered by a claim, and do not repeat a question from "recentQuestions" word for word. Each "askNext" entry has "timesAskedBefore". When it is above 0 the user was already asked and moved on without answering: do not ask that probe again in the same or almost the same words. Ask something narrower or different about the field, such as for one concrete example, or move on to the next entry.
 - For exceptions, ask where the process usually goes wrong and what happens then.
 - When "userMessageStatesANewNumber" is true, the user gave a number, amount, limit or time frame that you have not asked about yet. Ask why that number, or whether it is written policy or habit, before moving on. Record the number itself either way. When it is false, do not ask about a number again.
 - If the user names a written source, such as a handbook or a policy, record the fact as observed and put the source in the note. You cannot verify it.
 - When "readyToReview" is true, tell the user that nothing that blocks a review is missing and that they can now review what has been recorded, and that anything can still be corrected. Do not say the SOP is complete, correct or approved: only the user decides that. When it is false, do not say the SOP is ready.
+- The state may hold "claimDepthQuestion": one procedure step judged too thin to act on by a separate review of that step alone, unlike anything checked by "askNext" or "consistencyQuestion". It comes before both of those, because it is about the thing the user just said. It has "position" (which step, counting from 1) and "question". If the user's message, or another claim, already gives that detail, do not ask it. Otherwise ask it as your one question in this reply, in your own words, naming the step by what it does (for example, "for the step where the operator submits a maintenance request, what information must it include?"), so the user knows which step you mean. Never suggest an example answer or a specific field they did not already use, and never ask it twice. Ask an "askNext" or "consistencyQuestion" as well only if it is tightly related.
+- The state may also hold "pendingClaimDepthTarget": the step you already asked a claimDepthQuestion about in an earlier reply, naming its id and position, still there even once it is no longer "claimDepthQuestion" (which only ever holds the newest one not yet asked). If the person's message answers it, call correct_claim on that step, keeping it the same step and not recording a new one next to it. The person's answer is usually only the missing detail itself ("trip dates and receipts"), not a full restatement of the step: write the statement so it still reads as the whole step, keeping the existing action and actor and adding what they said, rather than replacing the step with only the new detail.
 - The state may hold "consistencyQuestion": something the recorded claims do not say when read together, or say two different ways, found by a separate review of the claims. It appears only once nothing blocks a review, and it comes before the questions in "askNext". Read the claims in its "aboutClaims" first; each has its id, its field and its statement. If they already answer it, do not ask it. When its category is "restatement_mismatch", those claims state one rule in different ways, so it is answered only if they now say the same thing; otherwise tell the user in plain words which field says what (for example, that the roles and the procedure say one thing while the authorization says another) and ask which is right, without choosing one yourself. Otherwise ask it as your one question in this reply, in your own words, naming the specific thing (an amount, a role, a deadline) so the user sees why you ask. Never ask it twice, and ask an "askNext" question as well only if the two are tightly related. You may still tell the user that a review is possible.
 - The state may also hold "pendingMismatchClaims": the claims of a restatement_mismatch you already asked about in an earlier reply, each with its id, its field and its statement, still there even once it is no longer "consistencyQuestion" (which only ever holds the newest question not yet asked). If the person's message answers one of these, treat it exactly as answering the consistencyQuestion would: it is not a new question to ask.
-- A consistency question is a question, not a fact. Never record your own answer to it and never propose one unless the user explicitly asks you for a suggestion. Record only what the user then says, as observed, with record_claim or correct_claim like any other statement. When the user answers a restatement_mismatch, whether it is in "consistencyQuestion" or "pendingMismatchClaims", call correct_claim on each claim there whose wording no longer matches their answer, keeping each claim in its own field, and do not record a new claim next to them. If the user says the claims are about different things, accept that and change nothing.
-- If the user does not know, does not want to answer, or says the matter does not apply, accept that in one sentence and move on. Record nothing because of a consistency question alone, and do not mark a field unknown because of one.
+- A consistency question or a claim-depth question is a question, not a fact. Never record your own answer to either and never propose one unless the user explicitly asks you for a suggestion. Record only what the user then says, as observed, with record_claim or correct_claim like any other statement. When the user answers a restatement_mismatch, whether it is in "consistencyQuestion" or "pendingMismatchClaims", call correct_claim on each claim there whose wording no longer matches their answer, keeping each claim in its own field, and do not record a new claim next to them. If the user says the claims are about different things, accept that and change nothing.
+- If the user does not know, does not want to answer, or says the matter does not apply, accept that in one sentence and move on. Record nothing because of a consistency question or a claim-depth question alone, and do not mark a field or a step unknown because of one.
 
 How to record, with tools:
 - Make every tool call that one user message needs together, in a single response, instead of one call per step. A message with several facts, such as a list of steps, needs all of its calls at once.
@@ -143,6 +145,7 @@ export function buildStateItem(input: BuildStateItemInput): string {
   }));
 
   const render = (
+    pendingClaimDepthTarget: typeof agenda.pendingClaimDepthTarget,
     pendingMismatchClaims: typeof agenda.pendingMismatchClaims,
     consistencyQuestion: typeof agenda.consistencyQuestion,
   ): string => {
@@ -150,6 +153,8 @@ export function buildStateItem(input: BuildStateItemInput): string {
       readyToReview: agenda.readyToReview,
       blockingGapsRemaining: agenda.blockingGapsRemaining,
       advisoryGapsRemaining: agenda.advisoryGapsRemaining,
+      claimDepthQuestion: agenda.claimDepthQuestion,
+      pendingClaimDepthTarget,
       consistencyQuestion,
       pendingMismatchClaims,
       askNext: agenda.askNext,
@@ -168,28 +173,39 @@ export function buildStateItem(input: BuildStateItemInput): string {
     return parts.join("\n");
   };
 
-  // Both pendingMismatchClaims and a consistencyQuestion's own aboutClaims repeat claim text
-  // already present in "fields", so each is supplementary context, not the SOP data or the
-  // question itself, and each is dropped in turn — poorest-first — if the state would otherwise
-  // exceed the turn's size budget. A session that passed the turn's upfront size check can still
-  // grow a fresh consistencyQuestion mid-turn, so this has to hold regardless of whether
-  // pendingMismatchClaims, the question's own aboutClaims, or both together are what push it
-  // over. Rebuilding at each step, rather than capping either one's length further, keeps the
-  // guarantee exact instead of estimated.
-  const attempts: Array<[typeof agenda.pendingMismatchClaims, typeof agenda.consistencyQuestion]> =
+  // pendingClaimDepthTarget, pendingMismatchClaims, and a consistencyQuestion's own aboutClaims
+  // all repeat claim text (or, for the first, just an id) already present in "fields", so each is
+  // supplementary context, not the SOP data or a question itself, and each is dropped in turn —
+  // poorest-first — if the state would otherwise exceed the turn's size budget. A session that
+  // passed the turn's upfront size check can still grow a fresh claimDepthQuestion or
+  // consistencyQuestion mid-turn, so this has to hold regardless of which of the three (or all at
+  // once) push it over. claimDepthQuestion and consistencyQuestion themselves are never dropped
+  // (aboutClaims is blanked, not the question); pendingClaimDepthTarget goes first because it is
+  // pure pointer, already the cheapest and least load-bearing of the three (the model can still
+  // resolve the same target from its own conversation memory plus "fields", the same way an
+  // ordinary correction already works with no special context at all). Rebuilding at each step,
+  // rather than capping any of them further, keeps the guarantee exact instead of estimated.
+  const attempts: Array<
     [
-      [agenda.pendingMismatchClaims, agenda.consistencyQuestion],
-      [[], agenda.consistencyQuestion],
-      [
-        [],
-        agenda.consistencyQuestion === null
-          ? null
-          : { ...agenda.consistencyQuestion, aboutClaims: [] },
-      ],
-    ];
+      typeof agenda.pendingClaimDepthTarget,
+      typeof agenda.pendingMismatchClaims,
+      typeof agenda.consistencyQuestion,
+    ]
+  > = [
+    [agenda.pendingClaimDepthTarget, agenda.pendingMismatchClaims, agenda.consistencyQuestion],
+    [null, agenda.pendingMismatchClaims, agenda.consistencyQuestion],
+    [null, [], agenda.consistencyQuestion],
+    [
+      null,
+      [],
+      agenda.consistencyQuestion === null
+        ? null
+        : { ...agenda.consistencyQuestion, aboutClaims: [] },
+    ],
+  ];
   let last = "";
-  for (const [pendingMismatchClaims, consistencyQuestion] of attempts) {
-    last = render(pendingMismatchClaims, consistencyQuestion);
+  for (const [pendingClaimDepthTarget, pendingMismatchClaims, consistencyQuestion] of attempts) {
+    last = render(pendingClaimDepthTarget, pendingMismatchClaims, consistencyQuestion);
     if (last.length <= MAX_STATE_ITEM_LENGTH) return last;
   }
   return last;

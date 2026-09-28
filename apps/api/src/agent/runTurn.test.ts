@@ -5,6 +5,8 @@ import {
   MAX_ASSISTANT_MESSAGE_LENGTH,
   MAX_IDENTIFIER_LENGTH,
   MAX_TOOL_CALLS_PER_MESSAGE,
+  markClaimDepthQuestionOffered,
+  mergeClaimDepthAnalysis,
   type SopFieldName,
   type SopSession,
 } from "@sop-agent/sop-core";
@@ -985,6 +987,117 @@ describe("runAgentTurn: the state size limit", () => {
     throw new Error(
       "the fallback never engaged even after 600 filler claims; test setup is broken",
     );
+  });
+
+  it("drops pendingClaimDepthTarget once it would otherwise push a near-full state past the limit", () => {
+    const { context, messageId, seedRecord, getSession } = setup();
+    let procedureClaimId = "";
+    for (const field of [
+      "purpose",
+      "scope",
+      "trigger",
+      "roles",
+      "procedure",
+      "authorization",
+      "completionCriteria",
+      "governance",
+    ] as const) {
+      const claim = seedRecord(field, `About ${field}.`);
+      if (field === "procedure") procedureClaimId = claim.claimId;
+    }
+    const source = {
+      type: "employee_statement" as const,
+      reference: { kind: "message" as const, messageId },
+    };
+
+    // Built through the real merge-then-offer path, not hand-typed, so lastOfferedClaimTextHash is
+    // the actual hash pendingClaimDepthTarget will compare against — the procedure claim's own text
+    // never changes across this test's filler growth, so the same offered review applies throughout.
+    const merged = mergeClaimDepthAnalysis(
+      getSession(),
+      {
+        findings: [
+          {
+            priorFindingId: null,
+            targetClaimId: procedureClaimId,
+            focus: "required_input",
+            question: "Q",
+          },
+        ],
+        resolvedPriorFindingIds: [],
+      },
+      context,
+    );
+    if (!merged.ok) throw new Error(merged.reason);
+    const findingId = merged.session.claimDepthReview?.findings[0]?.findingId ?? "";
+    const offeredClaimDepthReview = markClaimDepthQuestionOffered(
+      merged.session,
+      findingId,
+      context,
+    ).claimDepthReview;
+    if (offeredClaimDepthReview === null || offeredClaimDepthReview === undefined) {
+      throw new Error("setup failed");
+    }
+
+    const withClaimDepthReview = (session: SopSession): SopSession => ({
+      ...session,
+      claimDepthReview: offeredClaimDepthReview,
+    });
+    const pendingTargetOf = (session: SopSession): unknown => {
+      const stateItem = buildStateItem({ session, allowToolCalls: true });
+      const match = /<sop_state>(.*)<\/sop_state>/s.exec(stateItem);
+      if (match?.[1] === undefined) throw new Error("no state block");
+      return (JSON.parse(match[1]) as { pendingClaimDepthTarget: unknown }).pendingClaimDepthTarget;
+    };
+
+    // Phase 1: coarse bulk claims get close to the point where pendingClaimDepthTarget is dropped,
+    // checked directly (not by raw size) since buildStateItem's own cascade already makes a
+    // near-limit session's *measured* size non-monotonic in how much filler it holds.
+    let bulkFiller: SopSession["claims"] = [];
+    for (let index = 0; index < 600; index += 1) {
+      const candidate = [
+        ...bulkFiller,
+        buildClaim({
+          claimId: `bulk-${index}`.padEnd(MAX_IDENTIFIER_LENGTH, "-"),
+          field: "evidence",
+          value: { kind: "statement", text: `${index}-`.padEnd(500, "x") },
+          source,
+        }),
+      ];
+      const candidateSession = withClaimDepthReview({
+        ...getSession(),
+        claims: [...getSession().claims, ...candidate],
+      });
+      if (pendingTargetOf(candidateSession) === null) break; // overshot: keep the previous, lesser bulkFiller
+      bulkFiller = candidate;
+    }
+
+    // Phase 2: one more claim grown one character at a time gives byte-level control over the
+    // last stretch, since pendingClaimDepthTarget is a bare pointer (an id, a fixed field name, a
+    // position) — the window in which dropping only it is enough to fit is narrow, and phase 1's
+    // coarser steps could step past it entirely.
+    for (let fineLength = 0; fineLength <= 600; fineLength += 1) {
+      const fine =
+        fineLength === 0
+          ? []
+          : [
+              buildClaim({
+                claimId: "fine".padEnd(MAX_IDENTIFIER_LENGTH, "-"),
+                field: "evidence",
+                value: { kind: "statement", text: "x".repeat(fineLength) },
+                source,
+              }),
+            ];
+      const session = withClaimDepthReview({
+        ...getSession(),
+        claims: [...getSession().claims, ...bulkFiller, ...fine],
+      });
+      if (pendingTargetOf(session) === null) {
+        expect(measureStateItem(session)).toBeLessThanOrEqual(MAX_STATE_ITEM_LENGTH);
+        return;
+      }
+    }
+    throw new Error("the fallback never engaged; test setup is broken");
   });
 });
 

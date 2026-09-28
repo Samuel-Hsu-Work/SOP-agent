@@ -50,8 +50,12 @@ export function statedClaimsInReadingOrder(session: SopSession): Claim[] {
   ];
 }
 
-/** A fixed-size hash of a string (FNV-1a, 32 bit), so a fingerprint stays short whatever the claims hold. */
-function hashText(text: string): string {
+/**
+ * A fixed-size hash of a string (FNV-1a, 32 bit), so a fingerprint stays short whatever the
+ * claims hold. Shared with the claim-depth review, which fingerprints its own, differently-scoped
+ * candidate set the same way.
+ */
+export function hashText(text: string): string {
   let hash = 0x811c9dc5;
   for (let index = 0; index < text.length; index += 1) {
     hash ^= text.charCodeAt(index);
@@ -79,7 +83,8 @@ export function consistencyBasisOf(session: SopSession): string {
   return `${claims.length}:${hashText(text)}`;
 }
 
-function lastUserMessageText(session: SopSession): string {
+/** The text of the latest user message, or empty when there is none. Shared with the claim-depth review. */
+export function lastUserMessageText(session: SopSession): string {
   for (let index = session.messages.length - 1; index >= 0; index -= 1) {
     const message = session.messages[index];
     if (message?.role === "user") return message.text;

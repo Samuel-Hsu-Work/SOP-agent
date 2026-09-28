@@ -8,6 +8,7 @@ import {
   timestampSchema,
   totalClaimTextLength,
 } from "./claim.ts";
+import { claimDepthReviewSchema } from "./claimDepthReviewSchema.ts";
 import { consistencyReviewSchema } from "./consistencyReviewSchema.ts";
 import {
   MAX_ASSISTANT_MESSAGE_LENGTH,
@@ -171,6 +172,10 @@ export type SessionStatus = (typeof SESSION_STATUSES)[number];
  * Version 4 added the download time of the approved SOP's PDF.
  * Version 5 added document sources with a citation, and the link between two conflicting claims.
  * Version 6 added the consistency review: questions about what the claims do not say together.
+ * The claim-depth review (decision 62) added `claimDepthReview` after version 6 shipped, as a
+ * nullable field defaulting to null: additive and backward-compatible on its own, the same way the
+ * consistency review's own `offeredSequence` field was added without a version bump, so this did
+ * not need one either.
  */
 export const SESSION_SCHEMA_VERSION = 6;
 
@@ -225,6 +230,14 @@ export const sopSessionSchema = z
      * to ask, never claims, and nothing in it gates an approval or reaches the PDF.
      */
     consistencyReview: consistencyReviewSchema.nullable(),
+    /**
+     * The latest claim-depth review, or null before the first one (and for every session written
+     * before this field existed: `.default(null)` makes it optional at the input boundary, so an
+     * older stored session simply parses as "never reviewed" rather than being rejected). It holds
+     * questions for the agent to ask about one operationally thin procedure step at a time, never
+     * claims, and nothing in it gates an approval or reaches the PDF.
+     */
+    claimDepthReview: claimDepthReviewSchema.nullable().default(null),
   })
   .superRefine((session, context) => {
     const addIssue = (message: string, path: (string | number)[]) =>
@@ -338,5 +351,6 @@ export function createEmptySession(context: WriteContext): SopSession {
     downloadedAt: null,
     advisoryAcknowledgements: [],
     consistencyReview: null,
+    claimDepthReview: null,
   };
 }

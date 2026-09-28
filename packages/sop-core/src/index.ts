@@ -72,6 +72,37 @@ export {
   UNRESOLVED_STATUSES,
 } from "./claim.ts";
 export type {
+  ClaimDepthQuestion,
+  MergeClaimDepthResult,
+  PendingClaimDepthTarget,
+} from "./claimDepthReview.ts";
+export {
+  claimDepthBasisOf,
+  claimDepthCandidates,
+  currentClaimDepthReview,
+  keepClaimDepthReviewForCurrentClaims,
+  markClaimDepthQuestionOffered,
+  mergeClaimDepthAnalysis,
+  needsClaimDepthReview,
+  nextClaimDepthQuestion,
+  pendingClaimDepthTarget,
+} from "./claimDepthReview.ts";
+export type {
+  ClaimDepthAnalysisOutput,
+  ClaimDepthFinding,
+  ClaimDepthFocus,
+  ClaimDepthReview,
+} from "./claimDepthReviewSchema.ts";
+export {
+  CLAIM_DEPTH_FOCUSES,
+  claimDepthAnalysisOutputSchema,
+  claimDepthFindingSchema,
+  claimDepthReviewSchema,
+  MAX_CLAIM_DEPTH_FINDINGS,
+  MAX_CLAIM_DEPTH_QUESTION_LENGTH,
+  MAX_CLAIM_DEPTH_QUESTIONS_PER_SESSION,
+} from "./claimDepthReviewSchema.ts";
+export type {
   FieldGap,
   FieldReadiness,
   FieldState,

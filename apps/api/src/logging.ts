@@ -53,6 +53,11 @@ export interface ChatTurnLog {
   consistencyFindingsRaised: number;
   consistencyFindingsWaiting: number;
   consistencyQuestionCategory: string | null;
+  /** The claim-depth review: whether it ran, and only counts and a fixed focus, never a question. */
+  claimDepthReview: "not_needed" | "ran" | "failed";
+  claimDepthFindingsRaised: number;
+  claimDepthFindingsWaiting: number;
+  claimDepthQuestionFocus: string | null;
   stateItemChars: number;
   /** The first field the interview agenda proposed at the start of the turn: one of 13 names. */
   agendaTopField: string | null;

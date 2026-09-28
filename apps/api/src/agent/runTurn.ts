@@ -1,13 +1,21 @@
 import {
   type AssistantMessage,
+  type ClaimDepthFocus,
+  type ClaimDepthQuestion,
   type ConsistencyCategory,
   type ConsistencyQuestion,
+  claimDepthBasisOf,
+  currentClaimDepthReview,
   currentConsistencyReview,
+  keepClaimDepthReviewForCurrentClaims,
   keepConsistencyReviewForCurrentClaims,
   MAX_ASSISTANT_MESSAGE_LENGTH,
   MAX_TOOL_CALLS_PER_MESSAGE,
+  markClaimDepthQuestionOffered,
   markConsistencyQuestionOffered,
+  needsClaimDepthReview,
   needsConsistencyReview,
+  nextClaimDepthQuestion,
   nextConsistencyQuestion,
   type RecordedToolCall,
   type SopSession,
@@ -17,6 +25,7 @@ import {
 } from "@sop-agent/sop-core";
 import type { ModelClient, ModelConversationItem } from "../model/modelClient.ts";
 import { ModelOutputError } from "../model/modelFallback.ts";
+import { runClaimDepthReview } from "./claimDepthReview.ts";
 import { runConsistencyReview } from "./consistencyReview.ts";
 import {
   buildStateItem,
@@ -62,6 +71,13 @@ export interface TurnStats {
   consistencyFindingsWaiting: number;
   /** The category of the question handed to the agent for its reply, or null. Never its text. */
   consistencyQuestionCategory: ConsistencyCategory | null;
+  /** Whether the claim-depth review ran this turn, failed (and was skipped), or was not needed. */
+  claimDepthReview: "not_needed" | "ran" | "failed";
+  /** Findings the review added this turn, and findings still waiting to be asked at its end. */
+  claimDepthFindingsRaised: number;
+  claimDepthFindingsWaiting: number;
+  /** The focus of the question handed to the agent for its reply, or null. Never its text. */
+  claimDepthQuestionFocus: ClaimDepthFocus | null;
   /** The size of the state item on the last step. */
   stateItemChars: number;
   inputTokens: number;
@@ -92,6 +108,10 @@ export function createEmptyTurnStats(): TurnStats {
     consistencyFindingsRaised: 0,
     consistencyFindingsWaiting: 0,
     consistencyQuestionCategory: null,
+    claimDepthReview: "not_needed",
+    claimDepthFindingsRaised: 0,
+    claimDepthFindingsWaiting: 0,
+    claimDepthQuestionFocus: null,
     stateItemChars: 0,
     inputTokens: 0,
     cachedInputTokens: 0,
@@ -163,9 +183,20 @@ export async function runAgentTurn(input: RunAgentTurnInput): Promise<RunAgentTu
   let withdrawalsSoFar = 0;
   let conflictResolutionsSoFar = 0;
   let workingStateSize = measureStateItem(working);
-  // The review runs at most once a turn, and only when the claims have changed since the last one.
+  // Each review runs at most once a turn, and only when the claims have changed since the last one.
+  // The claim-depth review tracks the exact candidate basis it last attempted, not just a boolean
+  // "have I tried this turn": a session can already have unasked candidates before this turn's own
+  // tool calls even run (carried over from an earlier turn, or a session that predates this
+  // feature), so a plain once-per-turn flag would review only the old candidates and then block a
+  // second, later attempt within the same turn once this turn's own new steps are recorded — the
+  // person would never get a same-reply question for a step they just described. Comparing the
+  // basis instead re-attempts whenever the candidate set genuinely changes, while still never
+  // retrying forever: a rebase that had to be skipped for size (see below) still records what was
+  // attempted, so that specific candidate set is not retried again this same turn either.
+  let lastAttemptedClaimDepthBasis: string | null = null;
   let hasTriedConsistencyReview = false;
   let offeredQuestion: ConsistencyQuestion | null = null;
+  let offeredDepthQuestion: ClaimDepthQuestion | null = null;
 
   const forwardTextDelta = (delta: string) => {
     if (delta.length === 0) return;
@@ -182,7 +213,62 @@ export async function runAgentTurn(input: RunAgentTurnInput): Promise<RunAgentTu
     const allowToolCalls = step <= MAX_TOOL_ROUNDS;
     separatorPending = assistantText.length > 0;
 
-    if (!hasTriedConsistencyReview && needsConsistencyReview(working)) {
+    const claimDepthBasisNow = claimDepthBasisOf(working);
+    if (claimDepthBasisNow !== lastAttemptedClaimDepthBasis && needsClaimDepthReview(working)) {
+      lastAttemptedClaimDepthBasis = claimDepthBasisNow;
+      const depthReview = await runClaimDepthReview({
+        client,
+        model,
+        session: working,
+        context,
+        signal,
+      });
+      // The call is billed whether or not its answer held up.
+      stats.inputTokens += depthReview.inputTokens;
+      stats.cachedInputTokens += depthReview.cachedInputTokens;
+      stats.outputTokens += depthReview.outputTokens;
+      // Unlike a consistencyQuestion (whose only large part, aboutClaims, buildStateItem can blank
+      // as a last resort), a claimDepthQuestion's own question text is never dropped by the render
+      // cascade, so there is no render-time fallback that can shrink a fresh, oversized finding.
+      // The guard has to sit here instead, at the point the finding is accepted, mirroring the
+      // ordinary tool-call write guard below: a result that would not leave room for what the rest
+      // of the turn still needs to add is treated the same as a failed review, not applied.
+      if (
+        depthReview.status === "ran" &&
+        measureStateItem(depthReview.session) <= MAX_STATE_ITEM_LENGTH - STATE_ITEM_WRITE_MARGIN
+      ) {
+        working = depthReview.session;
+        // "ran" sticks for the rest of the turn even if a later attempt fails: this now runs as
+        // many times as the candidate basis changes (see above), and a turn where it succeeded at
+        // least once genuinely did produce or update real data, which "failed" would misreport.
+        stats.claimDepthReview = "ran";
+        // Accumulated, not assigned: a later attempt in the same turn carries earlier findings
+        // forward (not "raised" again) while raising its own new ones, so summing each attempt's
+        // own raisedCount is what keeps this turn-level count accurate across repeats.
+        stats.claimDepthFindingsRaised += depthReview.raisedCount;
+      } else {
+        // The rebase itself adds a little (a fresh basis hash, or a brand-new claimDepthReview
+        // object where none existed before), so it needs the same guard: if a session already
+        // sitting right at the write margin would be pushed past it by even that much, skip the
+        // rebase entirely rather than commit something the very next turn's upfront check would
+        // then refuse. The next turn simply retries the review, the same as any other skip.
+        const kept = keepClaimDepthReviewForCurrentClaims(working, context);
+        if (measureStateItem(kept) <= MAX_STATE_ITEM_LENGTH - STATE_ITEM_WRITE_MARGIN) {
+          working = kept;
+        }
+        if (stats.claimDepthReview !== "ran") stats.claimDepthReview = "failed";
+      }
+    }
+    offeredDepthQuestion = nextClaimDepthQuestion(working);
+
+    // A fresh claim-depth question always outranks a consistency question (see prompt.ts), so a
+    // consistency-review call that would just lose that priority fight this turn is not worth its
+    // cost — skipped entirely, not merely hidden once made.
+    if (
+      offeredDepthQuestion === null &&
+      !hasTriedConsistencyReview &&
+      needsConsistencyReview(working)
+    ) {
       hasTriedConsistencyReview = true;
       const review = await runConsistencyReview({
         client,
@@ -301,11 +387,19 @@ export async function runAgentTurn(input: RunAgentTurnInput): Promise<RunAgentTu
     if (step === MAX_TOOL_ROUNDS) stats.toolRoundCapHit = true;
   }
 
-  // The last step's state item carried the question, so it counts as asked once, whatever the reply says.
-  if (offeredQuestion !== null) {
+  // The last step's state item carried the question, so it counts as asked once, whatever the reply
+  // says. Only one of the two is ever marked: the prompt tells the agent to ask the depth question
+  // first when both are present (see prompt.ts), so a consistency question that lost that priority
+  // fight was never actually put to the person this turn, and must not silently consume its
+  // one-time offer — it stays available to be asked, and marked offered, on a later turn instead.
+  if (offeredDepthQuestion !== null) {
+    working = markClaimDepthQuestionOffered(working, offeredDepthQuestion.findingId, context);
+    stats.claimDepthQuestionFocus = offeredDepthQuestion.focus;
+  } else if (offeredQuestion !== null) {
     working = markConsistencyQuestionOffered(working, offeredQuestion.findingId, context);
     stats.consistencyQuestionCategory = offeredQuestion.category;
   }
+  stats.claimDepthFindingsWaiting = currentClaimDepthReview(working)?.findings.length ?? 0;
   stats.consistencyFindingsWaiting =
     currentConsistencyReview(working)?.findings.filter((finding) => !finding.wasOffered).length ??
     0;
