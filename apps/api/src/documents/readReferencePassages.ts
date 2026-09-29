@@ -1,5 +1,4 @@
 import {
-  computeGaps,
   disagreesWithWhatWasSaid,
   isAlreadyStated,
   MAX_PASSAGES_PER_UPLOAD,
@@ -51,17 +50,14 @@ export interface ReadReferencePassagesInput {
 }
 
 /**
- * The order in which the SOP needs a passage: one that disagrees with what the person said (the SOP
- * cannot be finished until they settle it), then one for a blocking field with a gap, one adding to
- * a stated blocking field, one for an advisory gap, and the rest. Code ranks, never the model.
+ * A passage that disagrees with what the person said comes first: the SOP cannot be finished until
+ * they settle it, so it must never be the one a cap drops. The rest keep the reader's own order,
+ * which it was asked to give with the passages this SOP needs most first. Ranking them by their
+ * field instead would favour a passage the reader filed under the wrong field: a manual test kept
+ * general rules mislabelled as procedure steps and dropped the closing and clock-out times.
  */
 function needRank(session: SopSession, passage: PassageDraft): number {
-  if (disagreesWithWhatWasSaid(session, passage)) return 0;
-  const readiness = computeGaps(session).fields.find((entry) => entry.field === passage.field);
-  const isBlocking = readiness?.fieldClass === "blocking";
-  const hasGap = readiness?.gap !== null;
-  if (isBlocking) return hasGap ? 1 : 2;
-  return hasGap ? 3 : 4;
+  return disagreesWithWhatWasSaid(session, passage) ? 0 : 1;
 }
 
 /**

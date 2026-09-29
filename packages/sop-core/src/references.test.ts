@@ -12,7 +12,12 @@ import {
   pendingDocumentPassages,
   selectDocumentPassages,
 } from "./interviewAgenda.ts";
-import { MAX_REFERENCE_DOCUMENTS, MAX_REFERENCE_PASSAGES, MAX_TOTAL_CLAIM_TEXT } from "./limits.ts";
+import {
+  MAX_PASSAGES_PER_UPLOAD,
+  MAX_REFERENCE_DOCUMENTS,
+  MAX_REFERENCE_PASSAGES,
+  MAX_TOTAL_CLAIM_TEXT,
+} from "./limits.ts";
 import { findPassage } from "./referenceSchema.ts";
 import {
   addReferenceDocument,
@@ -168,11 +173,11 @@ describe("adding a document's passages", () => {
     ).toBe("invalid_passage");
 
     let full = targeted;
-    for (let index = 0; index < MAX_REFERENCE_PASSAGES / 8; index += 1) {
+    for (let index = 0; index < MAX_REFERENCE_PASSAGES / MAX_PASSAGES_PER_UPLOAD; index += 1) {
       full = upload(
         full,
         `policy-${index}.md`,
-        Array.from({ length: 8 }, (_, step) => ({
+        Array.from({ length: MAX_PASSAGES_PER_UPLOAD }, (_, step) => ({
           field: "prerequisites" as const,
           statement: `Prerequisite ${index}-${step} is in place.`,
           location: `§ ${step}`,

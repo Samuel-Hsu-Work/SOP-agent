@@ -38,8 +38,8 @@ export const MAX_DOCUMENT_LOCATION_LENGTH = 120;
  * SOP being written, so these stay small: the whole store rides along in every request.
  */
 export const MAX_REFERENCE_DOCUMENTS = 5;
-export const MAX_PASSAGES_PER_UPLOAD = 8;
-export const MAX_REFERENCE_PASSAGES = 24;
+export const MAX_PASSAGES_PER_UPLOAD = 12;
+export const MAX_REFERENCE_PASSAGES = 36;
 /** A passage's statement is one short sentence for this SOP, not a paraphrase of a whole section. */
 export const MAX_PASSAGE_STATEMENT_LENGTH = 240;
 /** How many passages the agent is handed at once: one question, two facts at most. */

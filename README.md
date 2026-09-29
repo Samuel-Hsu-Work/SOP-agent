@@ -22,7 +22,7 @@ Each rule below is enforced in code, not asked of the model.
   acknowledged as advisory. Approval is refused in code while a blocking gap remains, whatever the
   model says.
 - **A document is reference material, never SOP content by itself.** An upload is read for the SOP
-  being written (so it waits until the person has said what that is), and it keeps at most eight
+  being written (so it waits until the person has said what that is), and it keeps at most twelve
   passages that SOP needs. Nothing enters the SOP until the agent has put a passage to the person and
   they agree; then it is their own statement, with the document shown as evidence. The agent sees only
   a passage's short statement, never the document.

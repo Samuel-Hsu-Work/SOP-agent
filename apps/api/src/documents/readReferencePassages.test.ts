@@ -255,7 +255,7 @@ describe("readReferencePassages", () => {
     expect(result.alreadyKnownCount).toBe(1);
   });
 
-  it("puts a passage that disagrees with the person first, then one that fills a blocking gap", async () => {
+  it("puts a passage that disagrees with the person first, then keeps the reader's order", async () => {
     const session = withStatement(
       targetSession(),
       "evidence",
@@ -267,6 +267,38 @@ describe("readReferencePassages", () => {
     const result = await outcome;
     expect(result.passages.map((passage) => passage.field)).toEqual(["evidence", "authorization"]);
     expect(result.potentialConflictCount).toBe(1);
+  });
+
+  it("drops the reader's last passages when there are too many, not those filed under an advisory field", async () => {
+    const manySections: ParsedSection[] = Array.from(
+      { length: MAX_PASSAGES_PER_UPLOAD + 2 },
+      (_, index) => ({
+        sectionId: `s${index + 1}`,
+        location: `p.${index + 1}`,
+        text: `Closing rule number ${index} applies to the front end.`,
+      }),
+    );
+    // The reader puts two advisory-field passages first (it judged them most needed) and fills the
+    // rest with procedure passages; ranking by field would keep the procedure ones instead.
+    const { outcome } = run(
+      [
+        () => ({
+          passages: manySections.map((section, index) => ({
+            field: index < 2 ? ("decisionRules" as const) : ("procedure" as const),
+            statement: section.text,
+            quote: section.text,
+            sectionId: section.sectionId,
+            effectiveDate: null,
+          })),
+        }),
+      ],
+      { sections: manySections },
+    );
+    const result = await outcome;
+    expect(result.passages.map((passage) => passage.citation.location)).toEqual(
+      manySections.slice(0, MAX_PASSAGES_PER_UPLOAD).map((section) => section.location),
+    );
+    expect(result.truncatedCount).toBe(2);
   });
 
   it("returns nothing but passage-shaped data even when the model does what the document told it to", async () => {

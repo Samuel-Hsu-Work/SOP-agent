@@ -1,5 +1,6 @@
 import {
   MAX_PASSAGE_STATEMENT_LENGTH,
+  MAX_PASSAGES_PER_UPLOAD,
   MAX_QUOTE_LENGTH,
   MIN_QUOTE_LENGTH,
   SOP_FIELDS,
@@ -11,8 +12,11 @@ const FIELD_GLOSSARY = SOP_FIELDS.map((field) => `- ${field.name}: ${field.descr
   "\n",
 );
 
-/** The most passages the reader is asked for. Code keeps fewer, ranked by what the SOP needs most. */
-export const MAX_PASSAGES_REQUESTED = 12;
+/**
+ * The most passages the reader is asked for: as many as one upload keeps, so code drops only what a
+ * reader returns beyond what it was asked for.
+ */
+export const MAX_PASSAGES_REQUESTED = MAX_PASSAGES_PER_UPLOAD;
 
 /**
  * The fixed rules for reading a document for one SOP. Nothing from a document, and nothing the
