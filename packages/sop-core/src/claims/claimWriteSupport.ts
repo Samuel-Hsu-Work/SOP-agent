@@ -1,4 +1,15 @@
 import {
+  MAX_CLAIMS,
+  MAX_HISTORY_ENTRIES,
+  MAX_NOTE_LENGTH,
+  MAX_STATEMENT_LENGTH,
+  MAX_TOTAL_CLAIM_TEXT,
+} from "../limits.ts";
+import { type ReferenceMaterial, totalReferenceTextLength } from "../references/referenceSchema.ts";
+import type { ClaimChange, ClaimHistoryEntry, HistoryReason, SopSession } from "../session.ts";
+import type { SopFieldName } from "../sopFields.ts";
+import type { WriteContext } from "../writeContext.ts";
+import {
   AGENT_WRITABLE_STATUSES,
   type Claim,
   type ClaimStatus,
@@ -8,17 +19,6 @@ import {
   calendarDateSchema,
   totalClaimTextLength,
 } from "./claim.ts";
-import {
-  MAX_CLAIMS,
-  MAX_HISTORY_ENTRIES,
-  MAX_NOTE_LENGTH,
-  MAX_STATEMENT_LENGTH,
-  MAX_TOTAL_CLAIM_TEXT,
-} from "./limits.ts";
-import { type ReferenceMaterial, totalReferenceTextLength } from "./referenceSchema.ts";
-import type { ClaimChange, ClaimHistoryEntry, HistoryReason, SopSession } from "./session.ts";
-import type { SopFieldName } from "./sopFields.ts";
-import type { WriteContext } from "./writeContext.ts";
 
 /*
  * What every claim-writing path shares: the result types, the session-wide limits, the history

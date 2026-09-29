@@ -1,4 +1,4 @@
-import { type ClaimStatus, UNRESOLVED_STATUSES } from "./claim.ts";
+import { type ClaimStatus, UNRESOLVED_STATUSES } from "./claims/claim.ts";
 import type { SopSession } from "./session.ts";
 import { type FieldClass, SOP_FIELDS, type SopFieldName } from "./sopFields.ts";
 

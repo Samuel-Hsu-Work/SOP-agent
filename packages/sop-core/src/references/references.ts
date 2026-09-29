@@ -1,9 +1,14 @@
-import type { ClaimWriteErrorCode } from "./claim.ts";
-import { type ClaimWriteError, checkSessionLimits } from "./claimWriteSupport.ts";
-import { raiseReferenceConflicts } from "./detectConflicts.ts";
+import type { ClaimWriteErrorCode } from "../claims/claim.ts";
+import { type ClaimWriteError, checkSessionLimits } from "../claims/claimWriteSupport.ts";
+import { raiseReferenceConflicts } from "../claims/detectConflicts.ts";
+import { statesTheSameThing, usesPassageWording } from "../claims/statementComparison.ts";
+import { MAX_REFERENCE_DOCUMENTS, MAX_REFERENCE_PASSAGES } from "../limits.ts";
+import type { SopSession } from "../session.ts";
+import { isStatedClaim } from "../sessionQueries.ts";
+import { normalizeStatement } from "../text.ts";
+import { type PassageDraft, passageDraftSchema } from "../transport/documentWire.ts";
+import type { WriteContext } from "../writeContext.ts";
 import type { DocumentFileKind } from "./documentFile.ts";
-import { type PassageDraft, passageDraftSchema } from "./documentWire.ts";
-import { MAX_REFERENCE_DOCUMENTS, MAX_REFERENCE_PASSAGES } from "./limits.ts";
 import { findPassage, isPassageStale } from "./referenceQueries.ts";
 import {
   MAX_TARGET_CLAIMS,
@@ -11,11 +16,6 @@ import {
   type ReferencePassage,
   updatePassage,
 } from "./referenceSchema.ts";
-import type { SopSession } from "./session.ts";
-import { isStatedClaim } from "./sessionQueries.ts";
-import { statesTheSameThing, usesPassageWording } from "./statementComparison.ts";
-import { normalizeStatement } from "./text.ts";
-import type { WriteContext } from "./writeContext.ts";
 
 /*
  * Reference material: what uploaded documents hold for the SOP being written. A passage is kept

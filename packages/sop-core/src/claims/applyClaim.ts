@@ -1,3 +1,14 @@
+import { findPassage, isPassageStale } from "../references/referenceQueries.ts";
+import {
+  MAX_CLAIMS_PER_PASSAGE,
+  type ReferenceMaterial,
+  updatePassage,
+} from "../references/referenceSchema.ts";
+import type { SopSession } from "../session.ts";
+import { hasUserMessage, userMessageText } from "../sessionQueries.ts";
+import type { SopFieldName } from "../sopFields.ts";
+import { areNumbersSupported, normalizeStatement } from "../text.ts";
+import type { WriteContext } from "../writeContext.ts";
 import {
   AGENT_WRITABLE_STATUSES,
   type AgentWritableStatus,
@@ -23,20 +34,9 @@ import {
 import type { ResolveConflictCommand } from "./conflictResolution.ts";
 import { applyResolveConflict } from "./conflictResolution.ts";
 import { pairConflictsAfterWrite } from "./detectConflicts.ts";
-import { findPassage, isPassageStale } from "./referenceQueries.ts";
-import {
-  MAX_CLAIMS_PER_PASSAGE,
-  type ReferenceMaterial,
-  updatePassage,
-} from "./referenceSchema.ts";
 import type { ReviewClaimCommand } from "./reviewClaim.ts";
 import { applyReviewCommand } from "./reviewClaim.ts";
-import type { SopSession } from "./session.ts";
-import { hasUserMessage, userMessageText } from "./sessionQueries.ts";
-import type { SopFieldName } from "./sopFields.ts";
 import { keepsPassageMeaning, usesPassageWording } from "./statementComparison.ts";
-import { areNumbersSupported, normalizeStatement } from "./text.ts";
-import type { WriteContext } from "./writeContext.ts";
 
 /** Statuses a correction, a mark-unknown or a withdrawal may act on. A `conflict` waits for the user's final answer. */
 const STATUSES_AGENT_MAY_CHANGE: readonly ClaimStatus[] = [

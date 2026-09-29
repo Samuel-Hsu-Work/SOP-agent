@@ -1,5 +1,5 @@
+import type { SopSession } from "../session.ts";
 import type { ReferencePassage } from "./referenceSchema.ts";
-import type { SopSession } from "./session.ts";
 
 /*
  * Reading the reference material of a session. Kept apart from `referenceSchema.ts`, which only

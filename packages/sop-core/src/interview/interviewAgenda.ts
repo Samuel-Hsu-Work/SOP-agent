@@ -1,25 +1,25 @@
-import type { Claim, ClaimStatus } from "./claim.ts";
+import type { Claim, ClaimStatus } from "../claims/claim.ts";
+import { computeGaps } from "../computeGaps.ts";
+import { MAX_DOCUMENT_PASSAGES_SHOWN } from "../limits.ts";
+import { isPassageStale } from "../references/referenceQueries.ts";
+import { MAX_TIMES_NOT_ASKED, type ReferencePassage } from "../references/referenceSchema.ts";
+import { isAlreadyStated, isPassageOpen } from "../references/references.ts";
+import type { SopSession } from "../session.ts";
+import { lastUserMessageText, statesOutOfTime } from "../sessionQueries.ts";
+import { getFieldDefinition, type SopFieldName } from "../sopFields.ts";
+import { quantitiesIn } from "../text.ts";
 import {
   type ClaimDepthQuestion,
   nextClaimDepthQuestion,
   type PendingClaimDepthTarget,
   pendingClaimDepthTarget,
 } from "./claimDepthReview.ts";
-import { computeGaps } from "./computeGaps.ts";
 import {
   type ConsistencyQuestion,
   type ConsistencyQuestionClaim,
   nextConsistencyQuestion,
   pendingMismatchClaims,
 } from "./consistencyReview.ts";
-import { MAX_DOCUMENT_PASSAGES_SHOWN } from "./limits.ts";
-import { isPassageStale } from "./referenceQueries.ts";
-import { MAX_TIMES_NOT_ASKED, type ReferencePassage } from "./referenceSchema.ts";
-import { isAlreadyStated, isPassageOpen } from "./references.ts";
-import type { SopSession } from "./session.ts";
-import { lastUserMessageText, statesOutOfTime } from "./sessionQueries.ts";
-import { getFieldDefinition, type SopFieldName } from "./sopFields.ts";
-import { quantitiesIn } from "./text.ts";
 
 /** How many questions the agenda proposes at once. The agent asks one or two, not a form. */
 export const MAX_AGENDA_QUESTIONS = 3;

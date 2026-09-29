@@ -1,5 +1,4 @@
 import { describe, expect, it } from "vitest";
-import { applyClaim, type ClaimWriteCommand } from "./applyClaim.ts";
 import {
   approveSession,
   canExportApprovedSop,
@@ -7,6 +6,7 @@ import {
   reopenSession,
   setAdvisoryAcknowledgement,
 } from "./approval.ts";
+import { applyClaim, type ClaimWriteCommand } from "./claims/applyClaim.ts";
 import { markSopDownloaded } from "./download.ts";
 import { type SopSession, sopSessionSchema } from "./session.ts";
 import {

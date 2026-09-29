@@ -1,14 +1,18 @@
 import { describe, expect, it } from "vitest";
-import { applyClaim, type ClaimWriteCommand } from "./applyClaim.ts";
+import { applyClaim, type ClaimWriteCommand } from "../claims/applyClaim.ts";
+import type { SopSession } from "../session.ts";
+import { SOP_FIELD_NAMES, type SopFieldName } from "../sopFields.ts";
+import {
+  buildClaim,
+  createDeterministicContext,
+  createSessionWithUserMessage,
+} from "../testing.ts";
 import {
   buildInterviewAgenda,
   orderProcedureSteps,
   recentQuestions,
   statesNewQuantity,
 } from "./interviewAgenda.ts";
-import type { SopSession } from "./session.ts";
-import { SOP_FIELD_NAMES, type SopFieldName } from "./sopFields.ts";
-import { buildClaim, createDeterministicContext, createSessionWithUserMessage } from "./testing.ts";
 
 function setup() {
   const context = createDeterministicContext();

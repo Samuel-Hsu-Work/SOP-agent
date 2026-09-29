@@ -1,11 +1,8 @@
 import { describe, expect, it } from "vitest";
-import { applyClaim, type ClaimWriteCommand } from "./applyClaim.ts";
-import type { Claim, ClaimStatus } from "./claim.ts";
-import { computeGaps } from "./computeGaps.ts";
-import { MAX_HISTORY_ENTRIES } from "./limits.ts";
-import { type ReviewClaimCommand, reviewActionsFor } from "./reviewClaim.ts";
-import { type SopSession, sopSessionSchema } from "./session.ts";
-import type { SopFieldName } from "./sopFields.ts";
+import { computeGaps } from "../computeGaps.ts";
+import { MAX_HISTORY_ENTRIES } from "../limits.ts";
+import { type SopSession, sopSessionSchema } from "../session.ts";
+import type { SopFieldName } from "../sopFields.ts";
 import {
   buildClaim,
   buildDocumentSide,
@@ -13,7 +10,10 @@ import {
   createDeterministicContext,
   createSessionWithUserMessage,
   referencesWith,
-} from "./testing.ts";
+} from "../testing.ts";
+import { applyClaim, type ClaimWriteCommand } from "./applyClaim.ts";
+import type { Claim, ClaimStatus } from "./claim.ts";
+import { type ReviewClaimCommand, reviewActionsFor } from "./reviewClaim.ts";
 
 function deepFreeze<T>(value: T): T {
   if (typeof value === "object" && value !== null && !Object.isFrozen(value)) {

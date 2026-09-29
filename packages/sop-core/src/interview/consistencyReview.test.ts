@@ -1,5 +1,14 @@
 import { describe, expect, it } from "vitest";
-import { applyClaim, type ClaimWriteCommand } from "./applyClaim.ts";
+import { applyClaim, type ClaimWriteCommand } from "../claims/applyClaim.ts";
+import { addReferenceDocument } from "../references/references.ts";
+import { type SopSession, sopSessionSchema } from "../session.ts";
+import { statedClaimsInReadingOrder, statesOutOfTime } from "../sessionQueries.ts";
+import type { SopFieldName } from "../sopFields.ts";
+import {
+  buildReferenceUpload,
+  createDeterministicContext,
+  createSessionWithUserMessage,
+} from "../testing.ts";
 import {
   consistencyBasisOf,
   currentConsistencyReview,
@@ -17,15 +26,6 @@ import {
   MAX_CONSISTENCY_QUESTIONS_PER_SESSION,
 } from "./consistencyReviewSchema.ts";
 import { buildInterviewAgenda } from "./interviewAgenda.ts";
-import { addReferenceDocument } from "./references.ts";
-import { type SopSession, sopSessionSchema } from "./session.ts";
-import { statedClaimsInReadingOrder, statesOutOfTime } from "./sessionQueries.ts";
-import type { SopFieldName } from "./sopFields.ts";
-import {
-  buildReferenceUpload,
-  createDeterministicContext,
-  createSessionWithUserMessage,
-} from "./testing.ts";
 
 const BLOCKING_STATEMENTS: [SopFieldName, string][] = [
   ["purpose", "Make every refund fair and traceable."],

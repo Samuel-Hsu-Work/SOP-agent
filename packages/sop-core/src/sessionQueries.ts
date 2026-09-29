@@ -1,4 +1,4 @@
-import type { Claim } from "./claim.ts";
+import type { Claim } from "./claims/claim.ts";
 import type { SopSession } from "./session.ts";
 
 /*

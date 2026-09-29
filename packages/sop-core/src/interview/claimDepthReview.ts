@@ -1,4 +1,13 @@
-import type { Claim } from "./claim.ts";
+import type { Claim } from "../claims/claim.ts";
+import { computeGaps } from "../computeGaps.ts";
+import type { SopSession } from "../session.ts";
+import {
+  lastUserMessageText,
+  statedClaimsInReadingOrder,
+  statesOutOfTime,
+} from "../sessionQueries.ts";
+import { hashText } from "../text.ts";
+import type { WriteContext } from "../writeContext.ts";
 import {
   type ClaimDepthAnalysisOutput,
   type ClaimDepthFinding,
@@ -6,15 +15,6 @@ import {
   MAX_CLAIM_DEPTH_QUESTION_LENGTH,
   MAX_CLAIM_DEPTH_QUESTIONS_PER_SESSION,
 } from "./claimDepthReviewSchema.ts";
-import { computeGaps } from "./computeGaps.ts";
-import type { SopSession } from "./session.ts";
-import {
-  lastUserMessageText,
-  statedClaimsInReadingOrder,
-  statesOutOfTime,
-} from "./sessionQueries.ts";
-import { hashText } from "./text.ts";
-import type { WriteContext } from "./writeContext.ts";
 
 /**
  * Whether the procedure field is currently one `buildInterviewAgenda` puts in "doNotAsk": it has an

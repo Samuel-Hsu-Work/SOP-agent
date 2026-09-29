@@ -7,9 +7,9 @@ import {
   identifierSchema,
   timestampSchema,
   totalClaimTextLength,
-} from "./claim.ts";
-import { claimDepthReviewSchema } from "./claimDepthReviewSchema.ts";
-import { consistencyReviewSchema } from "./consistencyReviewSchema.ts";
+} from "./claims/claim.ts";
+import { claimDepthReviewSchema } from "./interview/claimDepthReviewSchema.ts";
+import { consistencyReviewSchema } from "./interview/consistencyReviewSchema.ts";
 import {
   MAX_ASSISTANT_MESSAGE_LENGTH,
   MAX_CLAIMS,
@@ -24,7 +24,7 @@ import {
   EMPTY_REFERENCE_MATERIAL,
   referenceMaterialSchema,
   totalReferenceTextLength,
-} from "./referenceSchema.ts";
+} from "./references/referenceSchema.ts";
 import { ADVISORY_FIELD_NAMES, SOP_FIELD_NAMES } from "./sopFields.ts";
 import type { WriteContext } from "./writeContext.ts";
 

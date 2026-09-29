@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
-import { applyClaim, type ClaimWriteCommand } from "./applyClaim.ts";
 import { approveSession, setAdvisoryAcknowledgement } from "./approval.ts";
-import type { Claim, ClaimStatus } from "./claim.ts";
+import { applyClaim, type ClaimWriteCommand } from "./claims/applyClaim.ts";
+import type { Claim, ClaimStatus } from "./claims/claim.ts";
 import { createEmptySession, type SopSession } from "./session.ts";
 import {
   buildSopDocument,

@@ -1,5 +1,11 @@
 import { describe, expect, it } from "vitest";
-import { applyClaim, type ClaimWriteCommand } from "./applyClaim.ts";
+import { applyClaim, type ClaimWriteCommand } from "../claims/applyClaim.ts";
+import { type SopSession, sopSessionSchema } from "../session.ts";
+import {
+  buildClaim,
+  createDeterministicContext,
+  createSessionWithUserMessage,
+} from "../testing.ts";
 import {
   claimDepthBasisOf,
   claimDepthCandidates,
@@ -16,8 +22,6 @@ import {
   MAX_CLAIM_DEPTH_QUESTION_LENGTH,
   MAX_CLAIM_DEPTH_QUESTIONS_PER_SESSION,
 } from "./claimDepthReviewSchema.ts";
-import { type SopSession, sopSessionSchema } from "./session.ts";
-import { buildClaim, createDeterministicContext, createSessionWithUserMessage } from "./testing.ts";
 
 function setup() {
   const context = createDeterministicContext();

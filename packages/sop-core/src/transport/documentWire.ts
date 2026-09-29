@@ -1,8 +1,8 @@
 import { z } from "zod";
-import { calendarDateSchema, documentCitationSchema } from "./claim.ts";
-import { DOCUMENT_FILE_KINDS, type DocumentFileKind } from "./documentFile.ts";
-import { MAX_PASSAGE_STATEMENT_LENGTH, MAX_PASSAGES_PER_UPLOAD } from "./limits.ts";
-import { SOP_FIELD_NAMES } from "./sopFields.ts";
+import { calendarDateSchema, documentCitationSchema } from "../claims/claim.ts";
+import { MAX_PASSAGE_STATEMENT_LENGTH, MAX_PASSAGES_PER_UPLOAD } from "../limits.ts";
+import { DOCUMENT_FILE_KINDS, type DocumentFileKind } from "../references/documentFile.ts";
+import { SOP_FIELD_NAMES } from "../sopFields.ts";
 
 /**
  * The contract for `POST /documents/references`, shared so the browser checks exactly what the API

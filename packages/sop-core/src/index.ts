@@ -1,18 +1,4 @@
 export type {
-  AgentClaimCommand,
-  ApplyClaimResult,
-  ClaimWriteCommand,
-  ClaimWriteError,
-  CorrectClaimCommand,
-  DocumentPassageAnswer,
-  MarkUnknownCommand,
-  RecordClaimCommand,
-  ResolveConflictCommand,
-  WithdrawClaimCommand,
-} from "./applyClaim.ts";
-
-export { applyClaim, STATUSES_WRITABLE_BY } from "./applyClaim.ts";
-export type {
   AcknowledgementErrorCode,
   ApprovalBlocker,
   ApprovalErrorCode,
@@ -36,16 +22,18 @@ export {
   setAdvisoryAcknowledgement,
 } from "./approval.ts";
 export type {
-  ChatRequest,
-  ChatStreamEvent,
-  StreamErrorCode,
-} from "./chatWire.ts";
-export {
-  chatRequestSchema,
-  chatStreamEventSchema,
-  encodeChatStreamEvent,
-  STREAM_ERROR_CODES,
-} from "./chatWire.ts";
+  AgentClaimCommand,
+  ApplyClaimResult,
+  ClaimWriteCommand,
+  ClaimWriteError,
+  CorrectClaimCommand,
+  DocumentPassageAnswer,
+  MarkUnknownCommand,
+  RecordClaimCommand,
+  ResolveConflictCommand,
+  WithdrawClaimCommand,
+} from "./claims/applyClaim.ts";
+export { applyClaim, STATUSES_WRITABLE_BY } from "./claims/applyClaim.ts";
 export type {
   AgentWritableStatus,
   AuthorityTier,
@@ -57,7 +45,7 @@ export type {
   CreatorType,
   DocumentCitation,
   SourceType,
-} from "./claim.ts";
+} from "./claims/claim.ts";
 export {
   AGENT_WRITABLE_STATUSES,
   AUTHORITY_TIERS,
@@ -71,12 +59,31 @@ export {
   SOURCE_TYPES,
   totalClaimTextLength,
   UNRESOLVED_STATUSES,
-} from "./claim.ts";
+} from "./claims/claim.ts";
+export { disagreesWithWhatWasSaid } from "./claims/detectConflicts.ts";
+export type { ReviewClaimCommand } from "./claims/reviewClaim.ts";
+export { reviewActionsFor } from "./claims/reviewClaim.ts";
+export {
+  CONFLICT_TOPIC_OVERLAP,
+  keepsPassageMeaning,
+  PASSAGE_WORDING_OVERLAP,
+  statesTheSameThing,
+  usesPassageWording,
+} from "./claims/statementComparison.ts";
+export type {
+  FieldGap,
+  FieldReadiness,
+  FieldState,
+  GapReport,
+} from "./computeGaps.ts";
+export { computeGaps } from "./computeGaps.ts";
+export type { MarkDownloadedResult } from "./download.ts";
+export { markSopDownloaded } from "./download.ts";
 export type {
   ClaimDepthQuestion,
   MergeClaimDepthResult,
   PendingClaimDepthTarget,
-} from "./claimDepthReview.ts";
+} from "./interview/claimDepthReview.ts";
 export {
   claimDepthBasisOf,
   claimDepthCandidates,
@@ -87,13 +94,13 @@ export {
   needsClaimDepthReview,
   nextClaimDepthQuestion,
   pendingClaimDepthTarget,
-} from "./claimDepthReview.ts";
+} from "./interview/claimDepthReview.ts";
 export type {
   ClaimDepthAnalysisOutput,
   ClaimDepthFinding,
   ClaimDepthFocus,
   ClaimDepthReview,
-} from "./claimDepthReviewSchema.ts";
+} from "./interview/claimDepthReviewSchema.ts";
 export {
   CLAIM_DEPTH_FOCUSES,
   claimDepthAnalysisOutputSchema,
@@ -102,19 +109,12 @@ export {
   MAX_CLAIM_DEPTH_FINDINGS,
   MAX_CLAIM_DEPTH_QUESTION_LENGTH,
   MAX_CLAIM_DEPTH_QUESTIONS_PER_SESSION,
-} from "./claimDepthReviewSchema.ts";
-export type {
-  FieldGap,
-  FieldReadiness,
-  FieldState,
-  GapReport,
-} from "./computeGaps.ts";
-export { computeGaps } from "./computeGaps.ts";
+} from "./interview/claimDepthReviewSchema.ts";
 export type {
   ConsistencyQuestion,
   ConsistencyQuestionClaim,
   MergeConsistencyResult,
-} from "./consistencyReview.ts";
+} from "./interview/consistencyReview.ts";
 export {
   consistencyBasisOf,
   currentConsistencyReview,
@@ -124,13 +124,13 @@ export {
   needsConsistencyReview,
   nextConsistencyQuestion,
   pendingMismatchClaims,
-} from "./consistencyReview.ts";
+} from "./interview/consistencyReview.ts";
 export type {
   ConsistencyAnalysisOutput,
   ConsistencyCategory,
   ConsistencyFinding,
   ConsistencyReview,
-} from "./consistencyReviewSchema.ts";
+} from "./interview/consistencyReviewSchema.ts";
 export {
   CONSISTENCY_CATEGORIES,
   consistencyAnalysisOutputSchema,
@@ -142,29 +142,7 @@ export {
   MAX_CONSISTENCY_QUESTIONS_PER_SESSION,
   MAX_RELATED_CLAIMS,
   MIN_CLAIMS_IN_A_MISMATCH,
-} from "./consistencyReviewSchema.ts";
-export { disagreesWithWhatWasSaid } from "./detectConflicts.ts";
-export type { DocumentFileKind } from "./documentFile.ts";
-export { DOCUMENT_FILE_KINDS } from "./documentFile.ts";
-export type {
-  DocumentReferencesResponse,
-  PassageDraft,
-  QuoteRejectionReason,
-} from "./documentWire.ts";
-export {
-  DOCUMENT_EXTENSIONS,
-  DOCUMENT_REFERENCES_PATH,
-  DOCUMENT_UPLOAD_FILE_FIELD,
-  DOCUMENT_UPLOAD_SESSION_FIELD,
-  documentReferencesResponseSchema,
-  MAX_UPLOAD_BYTES,
-  passageDraftSchema,
-  QUOTE_REJECTION_REASONS,
-} from "./documentWire.ts";
-export type { MarkDownloadedResult } from "./download.ts";
-export { markSopDownloaded } from "./download.ts";
-export type { HttpError, HttpErrorCode } from "./httpWire.ts";
-export { HTTP_ERROR_CODES, httpErrorSchema } from "./httpWire.ts";
+} from "./interview/consistencyReviewSchema.ts";
 export type {
   AgendaExclusion,
   AgendaQuestion,
@@ -172,7 +150,7 @@ export type {
   DocumentPassageView,
   InterviewAgenda,
   ProcedureStepView,
-} from "./interviewAgenda.ts";
+} from "./interview/interviewAgenda.ts";
 export {
   buildInterviewAgenda,
   CLAIM_SOURCE_LABELS,
@@ -183,17 +161,17 @@ export {
   selectDocumentPassages,
   selectReviewQuestions,
   statesNewQuantity,
-} from "./interviewAgenda.ts";
+} from "./interview/interviewAgenda.ts";
 export * from "./limits.ts";
-export type { SopPdfRequest } from "./pdfWire.ts";
-export { SOP_PDF_MEDIA_TYPE, sopPdfFileName, sopPdfRequestSchema } from "./pdfWire.ts";
-export { findPassage, isPassageStale } from "./referenceQueries.ts";
+export type { DocumentFileKind } from "./references/documentFile.ts";
+export { DOCUMENT_FILE_KINDS } from "./references/documentFile.ts";
+export { findPassage, isPassageStale } from "./references/referenceQueries.ts";
 export type {
   PassageState,
   ReferenceDocument,
   ReferenceMaterial,
   ReferencePassage,
-} from "./referenceSchema.ts";
+} from "./references/referenceSchema.ts";
 export {
   EMPTY_REFERENCE_MATERIAL,
   MAX_TIMES_NOT_ASKED,
@@ -201,14 +179,14 @@ export {
   referenceMaterialSchema,
   referencePassageSchema,
   totalReferenceTextLength,
-} from "./referenceSchema.ts";
+} from "./references/referenceSchema.ts";
 export type {
   AddReferenceDocumentInput,
   AddReferenceDocumentResult,
   AddReferenceErrorCode,
   DeclineDocumentPassageCommand,
   DeclineDocumentPassageResult,
-} from "./references.ts";
+} from "./references/references.ts";
 export {
   ADD_REFERENCE_ERROR_CODES,
   addReferenceDocument,
@@ -219,9 +197,7 @@ export {
   markDocumentPassagesOffered,
   settleShownDocumentPassages,
   sopTargetOf,
-} from "./references.ts";
-export type { ReviewClaimCommand } from "./reviewClaim.ts";
-export { reviewActionsFor } from "./reviewClaim.ts";
+} from "./references/references.ts";
 export type {
   AdvisoryAcknowledgement,
   AgentToolName,
@@ -275,13 +251,36 @@ export {
   SOP_FIELD_NAMES,
   SOP_FIELDS,
 } from "./sopFields.ts";
-export {
-  CONFLICT_TOPIC_OVERLAP,
-  keepsPassageMeaning,
-  PASSAGE_WORDING_OVERLAP,
-  statesTheSameThing,
-  usesPassageWording,
-} from "./statementComparison.ts";
 export { areNumbersSupported } from "./text.ts";
+export type {
+  ChatRequest,
+  ChatStreamEvent,
+  StreamErrorCode,
+} from "./transport/chatWire.ts";
+export {
+  chatRequestSchema,
+  chatStreamEventSchema,
+  encodeChatStreamEvent,
+  STREAM_ERROR_CODES,
+} from "./transport/chatWire.ts";
+export type {
+  DocumentReferencesResponse,
+  PassageDraft,
+  QuoteRejectionReason,
+} from "./transport/documentWire.ts";
+export {
+  DOCUMENT_EXTENSIONS,
+  DOCUMENT_REFERENCES_PATH,
+  DOCUMENT_UPLOAD_FILE_FIELD,
+  DOCUMENT_UPLOAD_SESSION_FIELD,
+  documentReferencesResponseSchema,
+  MAX_UPLOAD_BYTES,
+  passageDraftSchema,
+  QUOTE_REJECTION_REASONS,
+} from "./transport/documentWire.ts";
+export type { HttpError, HttpErrorCode } from "./transport/httpWire.ts";
+export { HTTP_ERROR_CODES, httpErrorSchema } from "./transport/httpWire.ts";
+export type { SopPdfRequest } from "./transport/pdfWire.ts";
+export { SOP_PDF_MEDIA_TYPE, sopPdfFileName, sopPdfRequestSchema } from "./transport/pdfWire.ts";
 export type { WriteContext } from "./writeContext.ts";
 export { systemWriteContext } from "./writeContext.ts";

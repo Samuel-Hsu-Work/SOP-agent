@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import type { Claim } from "./claim.ts";
+import type { Claim } from "./claims/claim.ts";
 import { computeGaps } from "./computeGaps.ts";
 import { createEmptySession, type SopSession } from "./session.ts";
 import type { SopFieldName } from "./sopFields.ts";

@@ -1,3 +1,7 @@
+import { findPassage, isPassageStale } from "../references/referenceQueries.ts";
+import { type ReferencePassage, updatePassage } from "../references/referenceSchema.ts";
+import type { SopSession } from "../session.ts";
+import type { WriteContext } from "../writeContext.ts";
 import type { Claim } from "./claim.ts";
 import {
   type ApplyClaimResult,
@@ -9,11 +13,7 @@ import {
   historyEntryFor,
   type SessionChanges,
 } from "./claimWriteSupport.ts";
-import { findPassage, isPassageStale } from "./referenceQueries.ts";
-import { type ReferencePassage, updatePassage } from "./referenceSchema.ts";
-import type { SopSession } from "./session.ts";
 import { disagreeAboutTheSameThing } from "./statementComparison.ts";
-import type { WriteContext } from "./writeContext.ts";
 
 /*
  * Conflicts between an uploaded document and the person. A document's passages are reference

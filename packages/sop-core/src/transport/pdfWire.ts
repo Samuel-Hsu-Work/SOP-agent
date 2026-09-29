@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { sopSessionSchema } from "./session.ts";
+import { sopSessionSchema } from "../session.ts";
 
 /** The contract for downloading the approved SOP. Like `chatWire.ts`, both sides must agree on it. */
 export const sopPdfRequestSchema = z.object({ session: sopSessionSchema });

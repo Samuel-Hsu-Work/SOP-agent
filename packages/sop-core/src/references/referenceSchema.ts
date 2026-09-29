@@ -4,15 +4,15 @@ import {
   documentCitationSchema,
   identifierSchema,
   timestampSchema,
-} from "./claim.ts";
-import { DOCUMENT_FILE_KINDS } from "./documentFile.ts";
+} from "../claims/claim.ts";
 import {
   MAX_DOCUMENT_NAME_LENGTH,
   MAX_PASSAGE_STATEMENT_LENGTH,
   MAX_REFERENCE_DOCUMENTS,
   MAX_REFERENCE_PASSAGES,
-} from "./limits.ts";
-import { SOP_FIELD_NAMES } from "./sopFields.ts";
+} from "../limits.ts";
+import { SOP_FIELD_NAMES } from "../sopFields.ts";
+import { DOCUMENT_FILE_KINDS } from "./documentFile.ts";
 
 /**
  * Where a passage stands:

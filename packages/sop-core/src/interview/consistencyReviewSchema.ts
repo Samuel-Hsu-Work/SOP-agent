@@ -1,6 +1,6 @@
 import { z } from "zod";
-import { identifierSchema, timestampSchema } from "./claim.ts";
-import { SOP_FIELD_NAMES } from "./sopFields.ts";
+import { identifierSchema, timestampSchema } from "../claims/claim.ts";
+import { SOP_FIELD_NAMES } from "../sopFields.ts";
 
 /**
  * The kinds of problem a consistency review looks for: four kinds of omission and one kind of

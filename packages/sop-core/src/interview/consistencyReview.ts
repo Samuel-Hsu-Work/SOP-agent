@@ -1,5 +1,14 @@
-import type { Claim } from "./claim.ts";
-import { computeGaps } from "./computeGaps.ts";
+import type { Claim } from "../claims/claim.ts";
+import { computeGaps } from "../computeGaps.ts";
+import type { SopSession } from "../session.ts";
+import {
+  lastUserMessageText,
+  statedClaimsInReadingOrder,
+  statesOutOfTime,
+} from "../sessionQueries.ts";
+import type { SopFieldName } from "../sopFields.ts";
+import { hashText } from "../text.ts";
+import type { WriteContext } from "../writeContext.ts";
 import {
   type ConsistencyAnalysisOutput,
   type ConsistencyFinding,
@@ -11,15 +20,6 @@ import {
   MAX_RELATED_CLAIMS,
   MIN_CLAIMS_IN_A_MISMATCH,
 } from "./consistencyReviewSchema.ts";
-import type { SopSession } from "./session.ts";
-import {
-  lastUserMessageText,
-  statedClaimsInReadingOrder,
-  statesOutOfTime,
-} from "./sessionQueries.ts";
-import type { SopFieldName } from "./sopFields.ts";
-import { hashText } from "./text.ts";
-import type { WriteContext } from "./writeContext.ts";
 
 /**
  * A fingerprint of what the claims say: the stated claims' field, text, note and date, in reading

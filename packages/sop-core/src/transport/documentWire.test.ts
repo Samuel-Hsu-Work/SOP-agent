@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
+import { MAX_PASSAGE_STATEMENT_LENGTH, MAX_PASSAGES_PER_UPLOAD } from "../limits.ts";
 import { documentReferencesResponseSchema } from "./documentWire.ts";
-import { MAX_PASSAGE_STATEMENT_LENGTH, MAX_PASSAGES_PER_UPLOAD } from "./limits.ts";
 
 const draft = {
   field: "authorization",

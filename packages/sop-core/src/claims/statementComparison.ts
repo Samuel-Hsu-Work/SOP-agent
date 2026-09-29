@@ -1,4 +1,4 @@
-import { normalizeStatement, quantitiesIn, significantWordsOf } from "./text.ts";
+import { normalizeStatement, quantitiesIn, significantWordsOf } from "../text.ts";
 
 /*
  * Comparing statements, deterministically: whether two say the same thing, disagree about one

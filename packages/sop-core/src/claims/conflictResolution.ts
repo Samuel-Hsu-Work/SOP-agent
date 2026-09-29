@@ -1,3 +1,13 @@
+import { findPassage } from "../references/referenceQueries.ts";
+import {
+  MAX_CLAIMS_PER_PASSAGE,
+  type ReferencePassage,
+  updatePassage,
+} from "../references/referenceSchema.ts";
+import type { SopSession } from "../session.ts";
+import { hasUserMessage, userMessageText } from "../sessionQueries.ts";
+import { areNumbersSupported } from "../text.ts";
+import type { WriteContext } from "../writeContext.ts";
 import type { Claim } from "./claim.ts";
 import {
   type ApplyClaimResult,
@@ -11,13 +21,7 @@ import {
   validateText,
   withoutCopiedDocumentDate,
 } from "./claimWriteSupport.ts";
-import { findPassage } from "./referenceQueries.ts";
-import { MAX_CLAIMS_PER_PASSAGE, type ReferencePassage, updatePassage } from "./referenceSchema.ts";
-import type { SopSession } from "./session.ts";
-import { hasUserMessage, userMessageText } from "./sessionQueries.ts";
 import { keepsPassageMeaning } from "./statementComparison.ts";
-import { areNumbersSupported } from "./text.ts";
-import type { WriteContext } from "./writeContext.ts";
 
 /**
  * The user gave the final answer to a conflict. `claimId` is either member of the pair. The answer

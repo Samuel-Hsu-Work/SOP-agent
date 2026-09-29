@@ -1,3 +1,5 @@
+import type { HistoryReason, SopSession } from "../session.ts";
+import type { WriteContext } from "../writeContext.ts";
 import type { AuthorityTier, Claim, ClaimStatus } from "./claim.ts";
 import {
   type ApplyClaimResult,
@@ -8,8 +10,6 @@ import {
   type SessionChanges,
   STATUSES_WRITABLE_BY,
 } from "./claimWriteSupport.ts";
-import type { HistoryReason, SopSession } from "./session.ts";
-import type { WriteContext } from "./writeContext.ts";
 
 /**
  * A person's review of one claim. Review never edits what a claim says: confirming verifies it,

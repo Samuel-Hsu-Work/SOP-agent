@@ -1,8 +1,8 @@
 import { describe, expect, it } from "vitest";
+import { createEmptySession } from "../session.ts";
+import { createDeterministicContext } from "../testing.ts";
 import { httpErrorSchema } from "./httpWire.ts";
 import { sopPdfFileName, sopPdfRequestSchema } from "./pdfWire.ts";
-import { createEmptySession } from "./session.ts";
-import { createDeterministicContext } from "./testing.ts";
 
 describe("sopPdfFileName", () => {
   it("is built from the approval time alone, in plain ASCII", () => {

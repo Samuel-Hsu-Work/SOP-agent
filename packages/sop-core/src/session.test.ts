@@ -1,6 +1,10 @@
 import { describe, expect, it } from "vitest";
-import { applyClaim, type ClaimWriteCommand, type RecordClaimCommand } from "./applyClaim.ts";
-import type { Claim } from "./claim.ts";
+import {
+  applyClaim,
+  type ClaimWriteCommand,
+  type RecordClaimCommand,
+} from "./claims/applyClaim.ts";
+import type { Claim } from "./claims/claim.ts";
 import { computeGaps } from "./computeGaps.ts";
 import {
   MAX_MESSAGES,
@@ -8,7 +12,7 @@ import {
   MAX_REFERENCE_PASSAGES,
   MAX_STATEMENT_LENGTH,
 } from "./limits.ts";
-import type { ReferenceDocument, ReferencePassage } from "./referenceSchema.ts";
+import type { ReferenceDocument, ReferencePassage } from "./references/referenceSchema.ts";
 import { createEmptySession, type SopSession, sopSessionSchema } from "./session.ts";
 import type { SopFieldName } from "./sopFields.ts";
 import {

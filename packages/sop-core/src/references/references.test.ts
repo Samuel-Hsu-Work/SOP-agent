@@ -4,21 +4,30 @@ import {
   type ClaimWriteCommand,
   type CorrectClaimCommand,
   type RecordClaimCommand,
-} from "./applyClaim.ts";
-import { totalClaimTextLength } from "./claim.ts";
-import { statesCalendarDate } from "./claimWriteSupport.ts";
-import { computeGaps } from "./computeGaps.ts";
+} from "../claims/applyClaim.ts";
+import { totalClaimTextLength } from "../claims/claim.ts";
+import { statesCalendarDate } from "../claims/claimWriteSupport.ts";
+import { keepsPassageMeaning, usesPassageWording } from "../claims/statementComparison.ts";
+import { computeGaps } from "../computeGaps.ts";
 import {
   buildInterviewAgenda,
   pendingDocumentPassages,
   selectDocumentPassages,
-} from "./interviewAgenda.ts";
+} from "../interview/interviewAgenda.ts";
 import {
   MAX_PASSAGES_PER_UPLOAD,
   MAX_REFERENCE_DOCUMENTS,
   MAX_REFERENCE_PASSAGES,
   MAX_TOTAL_CLAIM_TEXT,
-} from "./limits.ts";
+} from "../limits.ts";
+import { type SopSession, sopSessionSchema } from "../session.ts";
+import { buildSopDocument } from "../sopDocument.ts";
+import type { SopFieldName } from "../sopFields.ts";
+import {
+  buildReferenceUpload,
+  createDeterministicContext,
+  createSessionWithUserMessage,
+} from "../testing.ts";
 import { findPassage } from "./referenceQueries.ts";
 import { MAX_TIMES_NOT_ASKED } from "./referenceSchema.ts";
 import {
@@ -28,15 +37,6 @@ import {
   settleShownDocumentPassages,
   sopTargetOf,
 } from "./references.ts";
-import { type SopSession, sopSessionSchema } from "./session.ts";
-import { buildSopDocument } from "./sopDocument.ts";
-import type { SopFieldName } from "./sopFields.ts";
-import { keepsPassageMeaning, usesPassageWording } from "./statementComparison.ts";
-import {
-  buildReferenceUpload,
-  createDeterministicContext,
-  createSessionWithUserMessage,
-} from "./testing.ts";
 
 const PURPOSE = "Describe how a front-end cashier closes out at the end of the night.";
 const CLOCK_OUT = "Cashiers clock out by 11:30 PM.";

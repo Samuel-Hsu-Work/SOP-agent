@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { identifierSchema, timestampSchema } from "./claim.ts";
+import { identifierSchema, timestampSchema } from "../claims/claim.ts";
 
 /**
  * The kinds of operational detail a claim-depth review looks for. Fixed, so a log line or a test

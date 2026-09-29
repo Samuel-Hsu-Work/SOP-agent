@@ -2,13 +2,13 @@
  * Helpers for tests in this package and in the apps. Exposed as `@sop-agent/sop-core/testing` so
  * they are not part of the main entry point.
  */
-import { applyClaim } from "./applyClaim.ts";
-import type { Claim } from "./claim.ts";
-import type { PassageDraft } from "./documentWire.ts";
-import type { ReferenceMaterial, ReferencePassage } from "./referenceSchema.ts";
-import type { AddReferenceDocumentInput } from "./references.ts";
+import { applyClaim } from "./claims/applyClaim.ts";
+import type { Claim } from "./claims/claim.ts";
+import type { ReferenceMaterial, ReferencePassage } from "./references/referenceSchema.ts";
+import type { AddReferenceDocumentInput } from "./references/references.ts";
 import { createEmptySession, type SopSession, type UserMessage } from "./session.ts";
 import type { SopFieldName } from "./sopFields.ts";
+import type { PassageDraft } from "./transport/documentWire.ts";
 import type { WriteContext } from "./writeContext.ts";
 
 /** A fixed clock and a counting id generator, so every test run produces the same ids. */

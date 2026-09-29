@@ -1,7 +1,7 @@
 import { z } from "zod";
-import { identifierSchema } from "./claim.ts";
-import { MAX_USER_MESSAGE_LENGTH } from "./limits.ts";
-import { sopSessionSchema } from "./session.ts";
+import { identifierSchema } from "../claims/claim.ts";
+import { MAX_USER_MESSAGE_LENGTH } from "../limits.ts";
+import { sopSessionSchema } from "../session.ts";
 
 /**
  * The contract between the browser and the API. It lives here because both sides must agree on it

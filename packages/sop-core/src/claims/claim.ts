@@ -7,8 +7,8 @@ import {
   MAX_QUOTE_LENGTH,
   MAX_STATEMENT_LENGTH,
   MIN_QUOTE_LENGTH,
-} from "./limits.ts";
-import { SOP_FIELD_NAMES } from "./sopFields.ts";
+} from "../limits.ts";
+import { SOP_FIELD_NAMES } from "../sopFields.ts";
 
 export const CLAIM_STATUSES = ["confirmed", "observed", "proposed", "unknown", "conflict"] as const;
 

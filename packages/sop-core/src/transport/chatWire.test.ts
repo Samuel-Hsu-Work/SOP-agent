@@ -1,8 +1,8 @@
 import { describe, expect, it } from "vitest";
+import { MAX_USER_MESSAGE_LENGTH } from "../limits.ts";
+import { createEmptySession } from "../session.ts";
+import { createDeterministicContext } from "../testing.ts";
 import { chatRequestSchema, chatStreamEventSchema, encodeChatStreamEvent } from "./chatWire.ts";
-import { MAX_USER_MESSAGE_LENGTH } from "./limits.ts";
-import { createEmptySession } from "./session.ts";
-import { createDeterministicContext } from "./testing.ts";
 
 const session = createEmptySession(createDeterministicContext());
 
