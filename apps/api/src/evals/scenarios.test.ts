@@ -19,9 +19,9 @@ function assertionOf(scenario: EvalScenario, id: string) {
 }
 
 describe("the scenario set", () => {
-  it("has twenty-six scenarios with unique ids, lines and assertions", () => {
-    expect(SCENARIOS).toHaveLength(26);
-    expect(new Set(SCENARIOS.map((scenario) => scenario.id)).size).toBe(26);
+  it("has twenty-eight scenarios with unique ids, lines and assertions", () => {
+    expect(SCENARIOS).toHaveLength(28);
+    expect(new Set(SCENARIOS.map((scenario) => scenario.id)).size).toBe(28);
     for (const scenario of SCENARIOS) {
       expect(scenario.expertLines.length).toBeGreaterThan(0);
       expect(scenario.assertions.length).toBeGreaterThan(0);
@@ -75,6 +75,7 @@ describe("the scenario set", () => {
       "consistency-review-ignores-restatements-that-agree",
       "consistency-review-raises-a-missed-deadline-and-a-vague-threshold",
       "claim-depth-review-asks-for-a-criterion-a-handoff-and-a-result",
+      "a-correction-is-recorded-once-not-in-every-claim",
     ]) {
       const session = buildSeedSession(scenarioById(id).seed, createFixtureContext());
       expect(computeGaps(session).blockingGapCount).toBe(0);
@@ -325,6 +326,171 @@ describe("scenario assertions", () => {
         }),
       ).pass,
     ).toBe(true);
+  });
+
+  it("the modality scenario fails a goal recorded as a requirement, and passes the expert's own terms", () => {
+    const scenario = scenarioById("a-goal-is-not-recorded-as-a-requirement");
+    const check = assertionOf(scenario, "keeps-the-experts-strength-of-statement").check;
+    const recorded = (statement: string) =>
+      buildTranscript({
+        turns: [{ reply: "Recorded.", commands: [recordCommand("purpose", statement)] }],
+      });
+
+    // The live interview's wording.
+    expect(
+      check(
+        recorded("All closing tasks must be finished before the cashier clocks out at 11:30 p.m."),
+      ).pass,
+    ).toBe(false);
+    expect(
+      check(
+        recorded(
+          "Make sure the cashier gets the closing tasks done before clocking out at 11:30 p.m.",
+        ),
+      ).pass,
+    ).toBe(true);
+    // Other obligation words turn the goal into a rule just as well.
+    for (const wording of [
+      "The cashier has to finish the closing tasks before clocking out at 11:30 p.m.",
+      "The cashier needs to finish the closing tasks before clocking out at 11:30 p.m.",
+      "The cashier shall finish the closing tasks before clocking out at 11:30 p.m.",
+    ]) {
+      expect(check(recorded(wording)).pass).toBe(false);
+    }
+  });
+
+  it("the correction scenario fails the live interview's fan-out, and passes a correction recorded once", () => {
+    const scenario = scenarioById("a-correction-is-recorded-once-not-in-every-claim");
+    const seeded = buildTranscript({ seed: scenario.seed, turns: [] }).seedSession.claims;
+    const idOf = (field: string, pattern: RegExp) => {
+      const claim = seeded.find(
+        (candidate) => candidate.field === field && pattern.test(candidate.value?.text ?? ""),
+      );
+      if (claim === undefined) throw new Error(`fixture missing: ${field}`);
+      return claim.claimId;
+    };
+    const correct = (claimId: string, statement: string) => ({
+      kind: "correct",
+      claimId,
+      statement,
+      note: null,
+      effectiveDate: null,
+    });
+    const transcriptWith = (commands: unknown[]) =>
+      buildTranscript({
+        seed: scenario.seed,
+        turns: [{ reply: "Recorded.", commands: commands as never }],
+      });
+    const failing = (transcript: ReturnType<typeof transcriptWith>) =>
+      scenario.assertions.filter((assertion) => !assertion.check(transcript).pass).map((a) => a.id);
+
+    // What the live interview did with "closing steps does not really matter, just suggestion".
+    const fannedOut = transcriptWith([
+      correct(
+        idOf("procedure", /checkout belt/),
+        "As a suggested closing task, clean the checkout belt.",
+      ),
+      correct(idOf("procedure", /scanner/), "As a suggested closing task, clean the scanner."),
+      recordCommand(
+        "controls",
+        "Do not perform a formal compliance check for the suggested closing tasks.",
+      ),
+      recordCommand(
+        "decisionRules",
+        "Treat the listed closing steps as suggestions rather than mandatory requirements.",
+      ),
+      correct(
+        idOf("completionCriteria", /done by 11:30/),
+        "Completing every suggested closing task is not required before the cashier clocks out.",
+      ),
+    ]);
+    expect(failing(fannedOut)).toEqual([
+      "leaves-each-step-as-it-was",
+      "records-the-correction-once",
+      "adds-no-claim-that-only-says-what-is-not-required",
+      "completion-criteria-still-say-when-it-is-done",
+    ]);
+
+    const recordedOnce = transcriptWith([
+      recordCommand(
+        "decisionRules",
+        "Treat the closing tasks as suggestions; the cashier may clock out at 11:30 p.m. with some left unfinished.",
+      ),
+      correct(idOf("completionCriteria", /done by 11:30/), "The cashier clocks out at 11:30 p.m."),
+    ]);
+    expect(failing(recordedOnce)).toEqual([]);
+
+    // Completion criteria as the live runs worded them: one says only that the cashier may leave
+    // work undone, the other also says what ends the process.
+    const completion = assertionOf(scenario, "completion-criteria-still-say-when-it-is-done");
+    const completionAs = (statement: string) =>
+      transcriptWith([correct(idOf("completionCriteria", /done by 11:30/), statement)]);
+    expect(
+      completion.check(
+        completionAs(
+          "The cashier clocks out at 11:30 p.m. even if closing tasks remain unfinished.",
+        ),
+      ).pass,
+    ).toBe(false);
+    expect(
+      completion.check(
+        completionAs(
+          "The closing process ends when the cashier clocks out at 11:30 p.m., even if some suggested tasks are not done.",
+        ),
+      ).pass,
+    ).toBe(true);
+
+    // Condition-first wording also says what marks the process as done.
+    expect(
+      completion.check(
+        completionAs(
+          "When the cashier clocks out at 11:30, the process is complete even if tasks are unfinished.",
+        ),
+      ).pass,
+    ).toBe(true);
+
+    // Copying the qualifier into several existing claims by correcting them is fan-out too.
+    const copiedByCorrection = transcriptWith([
+      correct(
+        idOf("purpose", /Make sure/),
+        "Provide the cashier with suggested closing tasks before clocking out at 11:30 p.m.",
+      ),
+      correct(
+        idOf("roles", /team lead checks/),
+        "The team lead does not check the suggested closing tasks.",
+      ),
+      recordCommand(
+        "decisionRules",
+        "Treat the closing steps as suggestions rather than requirements.",
+      ),
+    ]);
+    expect(
+      assertionOf(scenario, "records-the-correction-once").check(copiedByCorrection).pass,
+    ).toBe(false);
+
+    // Recording the rule elsewhere while leaving the contradicted "done by 11:30" criterion as it was.
+    const staleCriterion = transcriptWith([
+      recordCommand(
+        "decisionRules",
+        "Treat the closing steps as suggestions rather than requirements.",
+      ),
+    ]);
+    expect(completion.check(staleCriterion).pass).toBe(false);
+
+    // Correcting the purpose it contradicts, besides recording the rule once, is not a restatement.
+    const correctedPurpose = transcriptWith([
+      correct(
+        idOf("purpose", /Make sure/),
+        "Provide the cashier with suggested closing tasks before clocking out at 11:30 p.m.",
+      ),
+      recordCommand(
+        "decisionRules",
+        "Treat the closing steps as suggestions rather than requirements.",
+      ),
+    ]);
+    expect(assertionOf(scenario, "records-the-correction-once").check(correctedPurpose).pass).toBe(
+      true,
+    );
   });
 
   it("the unknown scenario catches a repeated question and a re-asked unknown", () => {

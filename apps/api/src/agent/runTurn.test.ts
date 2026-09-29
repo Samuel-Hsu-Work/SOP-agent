@@ -247,6 +247,17 @@ describe("runAgentTurn: the model input", () => {
     expect(INSTRUCTIONS).toContain("timesAskedBefore");
   });
 
+  it("tells the model to keep the user's strength of statement, not turn a goal into a rule", () => {
+    expect(INSTRUCTIONS).toContain("Keep the user's own strength of statement");
+    expect(INSTRUCTIONS).toContain("never turn a goal into a rule");
+  });
+
+  it("tells the model to record a correction that changes several claims once, not in every claim", () => {
+    expect(INSTRUCTIONS).toContain("record it once, in the one field it belongs to");
+    expect(INSTRUCTIONS).toContain("Do not add the qualifier to each step");
+    expect(INSTRUCTIONS).toContain("A completion criterion says what marks the process as done");
+  });
+
   it("asks for plain text, because the chat shows markdown symbols as they are", () => {
     expect(INSTRUCTIONS).toContain("Write plain text");
   });
