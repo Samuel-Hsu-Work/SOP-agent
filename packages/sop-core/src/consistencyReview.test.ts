@@ -19,9 +19,14 @@ import {
   MAX_CONSISTENCY_QUESTIONS_PER_SESSION,
 } from "./consistencyReviewSchema.ts";
 import { buildInterviewAgenda } from "./interviewAgenda.ts";
+import { addReferenceDocument } from "./references.ts";
 import { type SopSession, sopSessionSchema } from "./session.ts";
 import type { SopFieldName } from "./sopFields.ts";
-import { createDeterministicContext, createSessionWithUserMessage } from "./testing.ts";
+import {
+  buildReferenceUpload,
+  createDeterministicContext,
+  createSessionWithUserMessage,
+} from "./testing.ts";
 
 const BLOCKING_STATEMENTS: [SopFieldName, string][] = [
   ["purpose", "Make every refund fair and traceable."],
@@ -126,22 +131,27 @@ describe("when a consistency review is needed", () => {
     expect(needsConsistencyReview(fullSession())).toBe(true);
   });
 
-  it("is not needed while a document rule or a conflict is unsettled", () => {
-    const { fullSession, apply } = setup();
-    const withExtracted = apply(fullSession(), {
-      kind: "ingestExtracted",
-      createdByType: "extraction",
-      field: "evidence",
-      statement: "Invoices are kept for seven years.",
-      citation: {
-        documentName: "policy.md",
-        location: "§ Records",
-        quote: "Invoices are kept for seven years.",
-      },
-      effectiveDate: null,
-      note: null,
-    }).session;
-    expect(needsConsistencyReview(withExtracted)).toBe(false);
+  it("is not held back by an unused document passage, but is while a conflict with one is unsettled", () => {
+    const { fullSession, context } = setup();
+    const add = (session: SopSession, statement: string, field: SopFieldName) => {
+      const result = addReferenceDocument(
+        session,
+        buildReferenceUpload("policy.md", [{ field, statement }]),
+        context,
+      );
+      if (!result.ok) throw new Error(`setup failed: ${result.error.code}`);
+      return result.session;
+    };
+    const withPassage = add(fullSession(), "Invoices are kept for seven years.", "evidence");
+    expect(needsConsistencyReview(withPassage)).toBe(true);
+
+    const withConflict = add(
+      fullSession(),
+      "Managers up to $5,000, and above that the Finance Director.",
+      "authorization",
+    );
+    expect(withConflict.claims.some((claim) => claim.status === "conflict")).toBe(true);
+    expect(needsConsistencyReview(withConflict)).toBe(false);
   });
 
   it("is not needed after the person asked for the questions to stop", () => {

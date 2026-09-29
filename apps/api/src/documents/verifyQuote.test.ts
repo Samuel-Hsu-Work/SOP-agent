@@ -1,3 +1,4 @@
+import { MAX_PASSAGE_STATEMENT_LENGTH } from "@sop-agent/sop-core";
 import { describe, expect, it } from "vitest";
 import type { ParsedSection } from "./parseDocument.ts";
 import {
@@ -22,7 +23,7 @@ const sections: ParsedSection[] = [
 
 const candidate = (overrides: Partial<ExtractionCandidate> = {}): ExtractionCandidate => ({
   field: "authorization",
-  summary: "Payments above $10,000 need two approvals.",
+  statement: "Payments above $10,000 need two approvals.",
   quote: "Every vendor payment above $10,000 requires the written approval of two people",
   sectionId: "s1",
   effectiveDate: null,
@@ -116,7 +117,10 @@ describe("verifyCandidates", () => {
     const result = verifyCandidates(
       [
         candidate({ effectiveDate: "2024-01-01" }),
-        candidate({ quote: "It’s “final” — no exceptions." }),
+        candidate({
+          statement: "The decision is final, with no exceptions.",
+          quote: "It’s “final” — no exceptions.",
+        }),
       ],
       sections,
       "policy.md",
@@ -136,7 +140,7 @@ describe("verifyCandidates", () => {
     expect(result.drafts[1]?.citation.quote).toBe('It\'s "final" - no exceptions.');
   });
 
-  it("drops what cannot be proven, counts why, and rejects a fabricated quote even when the summary is right", () => {
+  it("drops what cannot be proven, counts why, and rejects a fabricated quote even when the statement is right", () => {
     const result = verifyCandidates(
       [
         candidate({
@@ -144,7 +148,9 @@ describe("verifyCandidates", () => {
         }),
         candidate({ sectionId: "s99" }),
         candidate({ quote: "too short" }),
-        candidate({ summary: "   " }),
+        candidate({ statement: "   " }),
+        candidate({ statement: "x".repeat(MAX_PASSAGE_STATEMENT_LENGTH + 1) }),
+        candidate({ statement: "Payments above $5,000 need two approvals." }),
         candidate(),
       ],
       sections,
@@ -152,12 +158,13 @@ describe("verifyCandidates", () => {
     );
     expect(result.drafts).toHaveLength(1);
     expect(result.rejected).toEqual({
-      count: 4,
+      count: 6,
       reasons: {
         quote_not_found_at_location: 1,
         unknown_location: 1,
         empty_or_too_short_quote: 1,
-        invalid_statement: 1,
+        invalid_statement: 2,
+        statement_not_supported_by_quote: 1,
       },
     });
   });

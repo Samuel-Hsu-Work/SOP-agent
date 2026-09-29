@@ -1,6 +1,8 @@
 import {
+  addReferenceDocument,
   applyClaim,
   type ClaimWriteCommand,
+  markDocumentPassagesOffered,
   type SopFieldName,
   type SopSession,
   setAdvisoryAcknowledgement,
@@ -42,7 +44,7 @@ function setup() {
       effectiveDate: null,
       insertBeforeClaimId,
     });
-  return { session, apply, record };
+  return { session, apply, record, context };
 }
 
 function viewOf(session: SopSession, field: SopFieldName) {
@@ -283,56 +285,83 @@ describe("buildClaimsView with documents", () => {
     quote: "Every vendor payment above $10,000 requires the written approval of two people.",
   };
 
+  /** A session whose purpose is stated, with one passage from the policy kept as reference. */
+  function withPassage(field: SopFieldName, statement: string) {
+    const { session, apply, record, context } = setup();
+    const targeted = record(session, "purpose", "Describe how vendor payments are approved.");
+    const uploaded = addReferenceDocument(
+      targeted.session,
+      {
+        document: { fileName: CITATION.documentName, fileKind: "markdown" },
+        passages: [{ field, statement, effectiveDate: null, citation: CITATION }],
+      },
+      context,
+    );
+    if (!uploaded.ok) throw new Error(`setup failed: ${uploaded.error.code}`);
+    return { session: uploaded.session, apply, record };
+  }
+
   function withConflict() {
-    const { session, apply, record } = setup();
-    const ingested = apply(session, {
-      kind: "ingestExtracted",
-      createdByType: "extraction",
-      field: "authorization",
-      statement: POLICY,
-      citation: CITATION,
-      effectiveDate: null,
-      note: null,
-      sourceMessageId: undefined,
-    } as never);
+    const { session, apply, record, context } = setup();
+    const targeted = record(session, "purpose", "Describe how vendor payments are approved.");
     const spoken = record(
-      ingested.session,
+      targeted.session,
       "authorization",
       "Payments up to $25,000 need only the Finance Director.",
     );
-    return { session: spoken.session, ingested: ingested.claim, spoken: spoken.claim, apply };
+    const uploaded = addReferenceDocument(
+      spoken.session,
+      {
+        document: { fileName: CITATION.documentName, fileKind: "markdown" },
+        passages: [
+          { field: "authorization", statement: POLICY, effectiveDate: null, citation: CITATION },
+        ],
+      },
+      context,
+    );
+    if (!uploaded.ok || uploaded.conflictsRaised !== 1) throw new Error("setup failed");
+    return { session: uploaded.session, spoken: spoken.claim, apply };
   }
 
-  it("gives an extracted claim its citation and the review actions of a document claim", () => {
-    const { session, apply } = setup();
-    const result = apply(session, {
-      kind: "ingestExtracted",
-      createdByType: "extraction",
-      field: "scope",
-      statement: "Applies to online orders.",
-      citation: CITATION,
-      effectiveDate: null,
+  it("shows the passage's quote beside the user's statement that rests on it", () => {
+    const { session, apply } = withPassage("authorization", POLICY);
+    const passageId = session.references.passages[0]?.passageId ?? "";
+    const offered = markDocumentPassagesOffered(session, [passageId]);
+    const agreed = apply(offered, {
+      kind: "record",
+      field: "authorization",
+      status: "observed",
+      statement: "Payments above $10,000 need the budget owner and the CFO.",
       note: null,
-    } as never);
-    const claim = viewOf(result.session, "scope").claims[0];
+      effectiveDate: null,
+      insertBeforeClaimId: null,
+      documentPassage: { passageId, userAgrees: true },
+    });
+    const claim = viewOf(agreed.session, "authorization").claims[0];
     expect(claim).toMatchObject({
-      status: "extracted",
-      statusLabel: "Extracted from a document",
+      status: "observed",
+      statusLabel: "Stated by you",
       citation: CITATION,
+      sourceLabel: `What you said, based on ${CITATION.documentName}`,
       canConfirm: true,
-      canReject: true,
+      canReject: false,
     });
   });
 
+  it("shows nothing for a passage no claim rests on: it is not SOP content", () => {
+    const { session } = withPassage("scope", "Applies to every vendor payment.");
+    expect(viewOf(session, "scope").claims).toEqual([]);
+    expect(viewOf(session, "scope").state).toBe("empty");
+  });
+
   it("shows two claims in conflict once, as a pair, and never as separate claims", () => {
-    const { session, ingested, spoken } = withConflict();
+    const { session, spoken } = withConflict();
     const view = viewOf(session, "authorization");
 
     expect(view.claims).toEqual([]);
     expect(view.claimCount).toBe(2);
     expect(view.conflictPairs).toHaveLength(1);
-    const ids = view.conflictPairs[0]?.sides.map((side) => side.claimId).sort();
-    expect(ids).toEqual([ingested.claimId, spoken.claimId].sort());
+    expect(view.conflictPairs[0]?.sides.map((side) => side.claimId)).toContain(spoken.claimId);
     // Neither side can be confirmed or rejected: only the user's answer in chat resolves it.
     for (const side of view.conflictPairs[0]?.sides ?? []) {
       expect(side).toMatchObject({ status: "conflict", canConfirm: false, canReject: false });
@@ -360,11 +389,10 @@ describe("buildClaimsView with documents", () => {
     const view = viewOf(resolved.session, "authorization");
     expect(view.conflictPairs).toEqual([]);
     expect(view.claims).toHaveLength(1);
-    // Newest first: the two resolutions, then the two times the conflict was found.
+    // Newest first: the two resolutions, then the moment the user's claim was found in conflict.
     expect(view.removedClaims.map((removed) => removed.reasonLabel)).toEqual([
       "Resolved by your answer",
       "Resolved by your answer",
-      "Conflict found",
       "Conflict found",
     ]);
   });

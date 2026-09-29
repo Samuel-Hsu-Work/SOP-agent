@@ -11,6 +11,7 @@ import {
   type SessionChanges,
   validateText,
 } from "./claimWriteSupport.ts";
+import { updatePassage } from "./referenceSchema.ts";
 import type { SopSession } from "./session.ts";
 import type { WriteContext } from "./writeContext.ts";
 
@@ -90,9 +91,21 @@ export function applyResolveConflict(
     note: text.note,
     createdByType: "agent",
     conflictsWithClaimId: null,
+    basedOnPassageId: null,
     createdAt: timestamp,
     updatedAt: timestamp,
   };
+
+  // The document side's passage is settled by this answer, so it never raises the conflict again.
+  let references = session.references;
+  for (const member of [keeper, dropped]) {
+    const passageId = member.source.type === "policy_document" ? member.basedOnPassageId : null;
+    if (passageId === null) continue;
+    references = updatePassage(references, passageId, (passage) => ({
+      ...passage,
+      state: "settled",
+    }));
+  }
 
   const changes: SessionChanges = {
     claims: session.claims.flatMap((claim) => {
@@ -115,6 +128,7 @@ export function applyResolveConflict(
         ),
       ),
     ],
+    references,
   };
   const limitError = checkSessionLimits(session, changes);
   if (limitError !== null) return { ok: false, error: limitError };

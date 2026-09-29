@@ -1,0 +1,57 @@
+{
+  "note": "Answer key for whether document reading keeps what one SOP needs and leaves out the rest. Each target is the SOP someone is writing, stated as the purpose and scope they would have given. `pnpm measure:extraction` reads the document once per target and scores the kept passages by their quotes: `needed` should be kept, `notRelevant` and `aboutTheDocument` should not. The same document is scored against two targets, so a reader that ignores the target cannot pass both.",
+  "files": {
+    "northstar-store-policy.pdf": [
+      {
+        "target": "cashier-closing",
+        "purpose": ["Describe how a front-end cashier closes out at the end of the night shift."],
+        "scope": ["Applies to front-end cashiers working the closing shift."],
+        "needed": [
+          "stop accepting new transactions at 11:00 PM",
+          "clock out by 11:30 PM",
+          "more than 15 minutes past the scheduled clock-out time",
+          "asks the Team Lead on duty before continuing",
+          "may change the order of closing tasks or defer non-urgent tasks"
+        ],
+        "notRelevant": [
+          "arrives 30 minutes before the store opens",
+          "present when the alarm is disarmed",
+          "starting float in each register",
+          "cleaning products approved by Store Operations",
+          "report unsafe conditions",
+          "wear their name badge"
+        ],
+        "aboutTheDocument": [
+          "applies to retail store operations",
+          "does not prescribe step-by-step procedures",
+          "owns this policy document",
+          "review proposed changes to this policy"
+        ]
+      },
+      {
+        "target": "store-opening",
+        "purpose": ["Describe how the opening team opens the store each morning."],
+        "scope": ["Applies to the opening team at each store."],
+        "needed": [
+          "arrives 30 minutes before the store opens",
+          "present when the alarm is disarmed",
+          "starting float in each register",
+          "open to customers at 7:00 AM"
+        ],
+        "notRelevant": [
+          "clock out by 11:30 PM",
+          "more than 15 minutes past the scheduled clock-out time",
+          "defer non-urgent tasks",
+          "stop accepting new transactions at 11:00 PM",
+          "wear their name badge"
+        ],
+        "aboutTheDocument": [
+          "applies to retail store operations",
+          "does not prescribe step-by-step procedures",
+          "owns this policy document",
+          "review proposed changes to this policy"
+        ]
+      }
+    ]
+  }
+}

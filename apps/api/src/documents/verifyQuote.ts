@@ -1,9 +1,10 @@
 import {
-  type ClaimDraft,
+  areNumbersSupported,
   calendarDateSchema,
+  MAX_PASSAGE_STATEMENT_LENGTH,
   MAX_QUOTE_LENGTH,
-  MAX_STATEMENT_LENGTH,
   MIN_QUOTE_LENGTH,
+  type PassageDraft,
   QUOTE_REJECTION_REASONS,
   type QuoteRejectionReason,
   type SopFieldName,
@@ -14,13 +15,14 @@ import type { ParsedSection } from "./parseDocument.ts";
  * The gate that makes a citation real. The model returns a quote and the id of the section it says
  * the quote is in; code checks that the quote is in that section's text. A quote the model made up,
  * moved to the wrong section, or bent into a paraphrase does not pass. It proves the quote exists,
- * not that the summary is right or the field is the right one: a person reviews every claim.
+ * not that the statement is right or the field is the right one: the person answers every passage
+ * before any of it enters the SOP.
  */
 
-/** What the model proposes for one rule. It carries no status, authority or creator. */
+/** What the model proposes for one passage. It carries no status, authority, creator or state. */
 export interface ExtractionCandidate {
   field: SopFieldName;
-  summary: string;
+  statement: string;
   quote: string;
   sectionId: string;
   effectiveDate: string | null;
@@ -78,22 +80,24 @@ export function verifyQuote(
 }
 
 export interface VerifiedExtraction {
-  drafts: ClaimDraft[];
+  drafts: PassageDraft[];
   rejected: { count: number; reasons: Partial<Record<QuoteRejectionReason, number>> };
 }
 
 /**
- * Turns the model's candidates into claim drafts, keeping only those whose quote is proven. The
+ * Turns the model's candidates into passage drafts, keeping only those whose quote is proven. The
  * location and the quote in a draft come from the document (through the matched section), never
- * from what the model said about them. Repeats are dropped, and so is a summary that is empty or
- * too long for a claim. A date the model read is kept only if it is a real calendar date.
+ * from what the model said about them. Repeats are dropped, and so is a statement that is empty or
+ * too long. The statement may reword the quote for the SOP, but a number in it that the quote does
+ * not hold is refused: a figure never enters the SOP from the reader alone. A date the model read
+ * is kept only if it is a real calendar date.
  */
 export function verifyCandidates(
   candidates: readonly ExtractionCandidate[],
   sections: readonly ParsedSection[],
   documentName: string,
 ): VerifiedExtraction {
-  const drafts: ClaimDraft[] = [];
+  const drafts: PassageDraft[] = [];
   const reasons: Partial<Record<QuoteRejectionReason, number>> = {};
   const seen = new Set<string>();
   const reject = (reason: QuoteRejectionReason) => {
@@ -101,14 +105,18 @@ export function verifyCandidates(
   };
 
   for (const candidate of candidates) {
-    const statement = candidate.summary.trim();
-    if (statement === "" || statement.length > MAX_STATEMENT_LENGTH) {
+    const statement = candidate.statement.trim();
+    if (statement === "" || statement.length > MAX_PASSAGE_STATEMENT_LENGTH) {
       reject("invalid_statement");
       continue;
     }
     const verification = verifyQuote(candidate, sections);
     if (!verification.isVerified) {
       reject(verification.reason);
+      continue;
+    }
+    if (!areNumbersSupported(statement, [verification.quote])) {
+      reject("statement_not_supported_by_quote");
       continue;
     }
     const key = [candidate.field, verification.location, verification.quote].join("|");

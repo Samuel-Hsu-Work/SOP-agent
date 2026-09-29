@@ -7,6 +7,7 @@ import {
   buildHyphenatedPdf,
   buildLongHandbookPdf,
   buildMessyDocx,
+  buildNorthstarStorePolicyPdf,
   buildRefundPolicyPdf,
   buildScannedPdf,
   buildTablePdf,
@@ -29,6 +30,7 @@ await write("expense-handbook.docx", await buildExpenseHandbookDocx());
 await write("incident-escalation-guide.md", INCIDENT_ESCALATION_GUIDE_MD);
 await write("vendor-payment-policy.md", VENDOR_PAYMENT_POLICY_MD);
 await write("vendor-payment-memo.md", VENDOR_PAYMENT_MEMO_MD);
+await write("northstar-store-policy.pdf", await buildNorthstarStorePolicyPdf());
 
 // The harder cases, for the live extraction measurement.
 await write("hard-two-column.pdf", (await buildTwoColumnPdf()).bytes);

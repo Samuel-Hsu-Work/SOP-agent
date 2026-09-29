@@ -1,17 +1,21 @@
 import {
+  addReferenceDocument,
   applyClaim,
   type ClaimWriteCommand,
   consistencyBasisOf,
   MAX_ASSISTANT_MESSAGE_LENGTH,
   MAX_IDENTIFIER_LENGTH,
+  MAX_PASSAGE_STATEMENT_LENGTH,
   MAX_TOOL_CALLS_PER_MESSAGE,
   markClaimDepthQuestionOffered,
+  markDocumentPassagesOffered,
   mergeClaimDepthAnalysis,
   type SopFieldName,
   type SopSession,
 } from "@sop-agent/sop-core";
 import {
   buildClaim,
+  buildReferenceUpload,
   createDeterministicContext,
   createSessionWithUserMessage,
   createUserMessage,
@@ -34,6 +38,7 @@ import {
   INSTRUCTIONS,
   MAX_STATE_ITEM_LENGTH,
   measureStateItem,
+  renderStateItem,
   STATE_ITEM_WRITE_MARGIN,
 } from "./prompt.ts";
 import { MAX_CONVERSATION_MESSAGES, MAX_TOOL_ROUNDS, runAgentTurn } from "./runTurn.ts";
@@ -1109,6 +1114,86 @@ describe("runAgentTurn: the state size limit", () => {
       }
     }
     throw new Error("the fallback never engaged; test setup is broken");
+  });
+
+  it("drops pending document passages first, then puts one passage instead of two, and always fits", () => {
+    const { context, messageId, seedRecord, getSession } = setup();
+    seedRecord("purpose", "Describe how the Finance team runs its approvals.");
+    const long = (index: number) =>
+      `The Finance team reviews approval rule number ${index} every quarter and records the outcome in the governance log`.padEnd(
+        MAX_PASSAGE_STATEMENT_LENGTH,
+        ".",
+      );
+    const uploaded = addReferenceDocument(
+      getSession(),
+      buildReferenceUpload(
+        "policy.md",
+        [0, 1, 2, 3].map((index) => ({
+          field: "governance" as const,
+          statement: long(index),
+          location: `§ ${index}`,
+        })),
+      ),
+      context,
+    );
+    if (!uploaded.ok) throw new Error(`setup failed: ${uploaded.error.code}`);
+    // Two passages were put to the user on an earlier turn; the other two are this turn's.
+    const [first, second] = uploaded.session.references.passages;
+    const base = markDocumentPassagesOffered(uploaded.session, [
+      first?.passageId ?? "",
+      second?.passageId ?? "",
+    ]);
+    const source = {
+      type: "employee_statement" as const,
+      reference: { kind: "message" as const, messageId },
+    };
+    const stateOf = (session: SopSession) => {
+      const stateItem = buildStateItem({ session, allowToolCalls: true });
+      const match = /<sop_state>(.*)<\/sop_state>/s.exec(stateItem);
+      if (match?.[1] === undefined) throw new Error("no state block");
+      return {
+        length: stateItem.length,
+        state: JSON.parse(match[1]) as {
+          documentPassages: unknown[];
+          pendingDocumentPassages: unknown[];
+        },
+      };
+    };
+    expect(stateOf(base).state.documentPassages).toHaveLength(2);
+    expect(stateOf(base).state.pendingDocumentPassages).toHaveLength(2);
+
+    const seen = { pendingDropped: false, secondDropped: false };
+    for (let length = 0; length <= 100_000; length += 50) {
+      const session: SopSession = {
+        ...base,
+        claims: [
+          ...base.claims,
+          buildClaim({
+            claimId: "filler",
+            field: "evidence",
+            value: { kind: "statement", text: "x".repeat(length) },
+            source,
+          }),
+        ],
+      };
+      const { length: size, state } = stateOf(session);
+      if (state.pendingDocumentPassages.length === 0 && state.documentPassages.length === 2) {
+        seen.pendingDropped = true;
+        expect(size).toBeLessThanOrEqual(MAX_STATE_ITEM_LENGTH);
+      }
+      if (state.documentPassages.length === 1) {
+        // One passage is shown only once the pending ones are already gone, and only that one
+        // counts as put to the user when the turn commits.
+        expect(state.pendingDocumentPassages).toEqual([]);
+        expect(
+          renderStateItem({ session, allowToolCalls: true }).shownDocumentPassageIds,
+        ).toHaveLength(1);
+        seen.secondDropped = true;
+        expect(size).toBeLessThanOrEqual(MAX_STATE_ITEM_LENGTH);
+        break;
+      }
+    }
+    expect(seen).toEqual({ pendingDropped: true, secondDropped: true });
   });
 });
 

@@ -4,7 +4,7 @@ export type {
   ClaimWriteCommand,
   ClaimWriteError,
   CorrectClaimCommand,
-  IngestExtractedClaimCommand,
+  DocumentPassageAnswer,
   MarkUnknownCommand,
   RecordClaimCommand,
   ResolveConflictCommand,
@@ -144,20 +144,26 @@ export {
   MAX_RELATED_CLAIMS,
   MIN_CLAIMS_IN_A_MISMATCH,
 } from "./consistencyReviewSchema.ts";
-export { CONFLICT_TOPIC_OVERLAP, findConflictPartner } from "./detectConflicts.ts";
+export {
+  CONFLICT_TOPIC_OVERLAP,
+  disagreesWithWhatWasSaid,
+  statesTheSameThing,
+} from "./detectConflicts.ts";
 export type {
-  ClaimDraft,
-  DocumentExtractResponse,
   DocumentFileKind,
+  DocumentReferencesResponse,
+  PassageDraft,
   QuoteRejectionReason,
 } from "./documentWire.ts";
 export {
-  claimDraftSchema,
   DOCUMENT_EXTENSIONS,
   DOCUMENT_FILE_KINDS,
-  documentExtractResponseSchema,
-  MAX_EXTRACTED_CLAIMS_PER_DOCUMENT,
+  DOCUMENT_REFERENCES_PATH,
+  DOCUMENT_UPLOAD_FILE_FIELD,
+  DOCUMENT_UPLOAD_SESSION_FIELD,
+  documentReferencesResponseSchema,
   MAX_UPLOAD_BYTES,
+  passageDraftSchema,
   QUOTE_REJECTION_REASONS,
 } from "./documentWire.ts";
 export type { MarkDownloadedResult } from "./download.ts";
@@ -168,6 +174,7 @@ export type {
   AgendaExclusion,
   AgendaQuestion,
   ConflictSide,
+  DocumentPassageView,
   InterviewAgenda,
   ProcedureStepView,
 } from "./interviewAgenda.ts";
@@ -176,15 +183,49 @@ export {
   CLAIM_SOURCE_LABELS,
   MAX_AGENDA_QUESTIONS,
   orderProcedureSteps,
+  pendingDocumentPassages,
   recentQuestions,
+  selectDocumentPassages,
   selectReviewQuestions,
   statesNewQuantity,
 } from "./interviewAgenda.ts";
 export * from "./limits.ts";
 export type { SopPdfRequest } from "./pdfWire.ts";
 export { SOP_PDF_MEDIA_TYPE, sopPdfFileName, sopPdfRequestSchema } from "./pdfWire.ts";
+export type {
+  PassageState,
+  ReferenceDocument,
+  ReferenceMaterial,
+  ReferencePassage,
+} from "./referenceSchema.ts";
+export {
+  EMPTY_REFERENCE_MATERIAL,
+  findPassage,
+  isPassageStale,
+  PASSAGE_STATES,
+  referenceMaterialSchema,
+  referencePassageSchema,
+  totalReferenceTextLength,
+} from "./referenceSchema.ts";
+export type {
+  AddReferenceDocumentInput,
+  AddReferenceDocumentResult,
+  AddReferenceErrorCode,
+  DeclineDocumentPassageCommand,
+  DeclineDocumentPassageResult,
+} from "./references.ts";
+export {
+  ADD_REFERENCE_ERROR_CODES,
+  addReferenceDocument,
+  declineDocumentPassage,
+  hasSopTarget,
+  isAlreadyStated,
+  isPassageOpen,
+  markDocumentPassagesOffered,
+  sopTargetOf,
+} from "./references.ts";
 export type { ReviewClaimCommand } from "./reviewClaim.ts";
-export { REJECTED_NOTE, reviewActionsFor } from "./reviewClaim.ts";
+export { reviewActionsFor } from "./reviewClaim.ts";
 export type {
   AdvisoryAcknowledgement,
   AgentToolName,
@@ -205,6 +246,7 @@ export {
   CLAIM_CHANGES,
   CORRECT_CLAIM_TOOL_NAME,
   createEmptySession,
+  DECLINE_DOCUMENT_PASSAGE_TOOL_NAME,
   HISTORY_REASONS,
   MARK_CLAIM_UNKNOWN_TOOL_NAME,
   RECORD_CLAIM_TOOL_NAME,
@@ -236,5 +278,6 @@ export {
   SOP_FIELD_NAMES,
   SOP_FIELDS,
 } from "./sopFields.ts";
+export { areNumbersSupported } from "./text.ts";
 export type { WriteContext } from "./writeContext.ts";
 export { systemWriteContext } from "./writeContext.ts";

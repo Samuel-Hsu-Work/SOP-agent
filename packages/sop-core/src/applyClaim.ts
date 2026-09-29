@@ -23,22 +23,37 @@ import {
 import type { ResolveConflictCommand } from "./conflictResolution.ts";
 import { applyResolveConflict } from "./conflictResolution.ts";
 import { pairConflictsAfterWrite } from "./detectConflicts.ts";
-import type { IngestExtractedClaimCommand } from "./documentClaims.ts";
-import { applyIngestExtracted } from "./documentClaims.ts";
+import {
+  findPassage,
+  isPassageStale,
+  MAX_CLAIMS_PER_PASSAGE,
+  type ReferenceMaterial,
+  updatePassage,
+} from "./referenceSchema.ts";
 import type { ReviewClaimCommand } from "./reviewClaim.ts";
 import { applyReviewCommand } from "./reviewClaim.ts";
 import type { SopSession } from "./session.ts";
 import type { SopFieldName } from "./sopFields.ts";
-import { normalizeStatement } from "./text.ts";
+import { areNumbersSupported, normalizeStatement } from "./text.ts";
 import type { WriteContext } from "./writeContext.ts";
 
-/** Statuses a correction, a mark-unknown or a withdrawal may act on. An `extracted` claim waits for a person's review, and a `conflict` for the user's final answer. */
+/** Statuses a correction, a mark-unknown or a withdrawal may act on. A `conflict` waits for the user's final answer. */
 const STATUSES_AGENT_MAY_CHANGE: readonly ClaimStatus[] = [
   "observed",
   "proposed",
   "unknown",
   "confirmed",
 ];
+
+/**
+ * The user's answer to a document passage the agent put to them. `userAgrees` true: the claim is
+ * their statement that the passage applies, and it rests on it. False: they answered differently,
+ * so the claim is theirs alone and the passage is not put to them again, or raised as a conflict.
+ */
+export interface DocumentPassageAnswer {
+  passageId: string;
+  userAgrees: boolean;
+}
 
 /**
  * Add a claim. The status is a plain `ClaimStatus` on purpose: the model-facing tool schema only
@@ -57,9 +72,15 @@ export interface RecordClaimCommand {
   sourceMessageId: string;
   /** Procedure only: place the new step before this step. Null appends. */
   insertBeforeClaimId: string | null;
+  /** When the claim answers a document passage put to the user. Absent or null otherwise. */
+  documentPassage?: DocumentPassageAnswer | null;
 }
 
-/** The user restated or fixed something already recorded. The result is always `observed`, and the field never changes. */
+/**
+ * The user restated or fixed something already recorded. The result is always `observed`, and the
+ * field never changes. The new wording is the user's, so a link to a passage is dropped unless this
+ * correction is itself their answer to one.
+ */
 export interface CorrectClaimCommand {
   kind: "correct";
   createdByType: "agent";
@@ -68,6 +89,8 @@ export interface CorrectClaimCommand {
   note: string | null;
   effectiveDate: string | null;
   sourceMessageId: string;
+  /** When the correction answers a document passage put to the user. Absent or null otherwise. */
+  documentPassage?: DocumentPassageAnswer | null;
 }
 
 /** The user does not know. Targets an existing claim, or with a null `claimId` records a new unknown in `field`. */
@@ -92,8 +115,8 @@ export interface WithdrawClaimCommand {
 }
 
 /**
- * The commands the agent's tools can build. The model cannot construct a review command, and it
- * cannot construct an ingestion command either: both are outside this type.
+ * The commands the agent's tools can build. The model cannot construct a review command, and no
+ * command lets it put a document's words into the SOP without the user's answer.
  */
 export type AgentClaimCommand =
   | RecordClaimCommand
@@ -102,17 +125,9 @@ export type AgentClaimCommand =
   | WithdrawClaimCommand
   | ResolveConflictCommand;
 
-export type ClaimWriteCommand =
-  | AgentClaimCommand
-  | ReviewClaimCommand
-  | IngestExtractedClaimCommand;
+export type ClaimWriteCommand = AgentClaimCommand | ReviewClaimCommand;
 
-export type {
-  ApplyClaimResult,
-  ClaimWriteError,
-  IngestExtractedClaimCommand,
-  ResolveConflictCommand,
-};
+export type { ApplyClaimResult, ClaimWriteError, ResolveConflictCommand };
 export { STATUSES_WRITABLE_BY };
 
 /**
@@ -168,6 +183,90 @@ function findRecordedDuplicate(
   return isSameWords(candidate) ? candidate : undefined;
 }
 
+/** A passage the user can be answering: put to them, or already used for another claim. */
+const ANSWERABLE_PASSAGE_STATES = ["offered", "used"] as const;
+
+/**
+ * Checks a claim's answer to a document passage. The passage must be one the agent was handed and
+ * that still applies. A claim the user agrees rests on it may reword the passage for this SOP, but
+ * every number it states must come from the passage, its quote, or what the user said: a figure
+ * cannot appear in the SOP that neither the document nor the user gave.
+ */
+function checkPassageAnswer(
+  session: SopSession,
+  answer: DocumentPassageAnswer | null,
+  input: {
+    field: SopFieldName;
+    statement: string;
+    status: ClaimStatus;
+    sourceMessageId: string;
+    previousText: string | null;
+  },
+): ClaimWriteError | null {
+  if (answer === null) return null;
+  if (input.status !== "observed") {
+    return {
+      code: "wrong_command_for_status",
+      message:
+        'An answer to a document passage is the user\'s own statement: record it as "observed".',
+    };
+  }
+  const passage = findPassage(session, answer.passageId);
+  if (passage === undefined) {
+    return { code: "passage_not_found", message: "There is no document passage with that id." };
+  }
+  const isAnswerable =
+    (ANSWERABLE_PASSAGE_STATES as readonly string[]).includes(passage.state) &&
+    !isPassageStale(session, passage);
+  if (!isAnswerable || (!answer.userAgrees && passage.state !== "offered")) {
+    return {
+      code: "passage_not_offered",
+      message:
+        'Only a passage from "documentPassages" or "pendingDocumentPassages", which you have put to the user, can be answered.',
+    };
+  }
+  if (passage.field !== input.field) {
+    return {
+      code: "passage_field_mismatch",
+      message: `That passage is about the ${passage.field} field. Answer it with a claim in that field, or record the user's statement without the passage.`,
+    };
+  }
+  if (!answer.userAgrees) return null;
+  const userText =
+    session.messages.find((message) => message.id === input.sourceMessageId)?.text ?? "";
+  const sources = [passage.citation.quote, passage.statement, userText];
+  if (input.previousText !== null) sources.push(input.previousText);
+  if (!areNumbersSupported(input.statement, sources)) {
+    return {
+      code: "statement_not_supported",
+      message:
+        "Every number in the statement must come from the document passage or from what the user said. Use the passage's figures, or ask the user.",
+    };
+  }
+  return null;
+}
+
+/** The reference material after a claim answered a passage: used by the claim, or declined. */
+function referencesAfterAnswer(
+  references: ReferenceMaterial,
+  answer: DocumentPassageAnswer | null,
+  claimId: string,
+): ReferenceMaterial | undefined {
+  if (answer === null) return undefined;
+  return updatePassage(references, answer.passageId, (passage) =>
+    answer.userAgrees
+      ? {
+          ...passage,
+          state: "used",
+          claimIds:
+            passage.claimIds.includes(claimId) || passage.claimIds.length >= MAX_CLAIMS_PER_PASSAGE
+              ? passage.claimIds
+              : [...passage.claimIds, claimId],
+        }
+      : { ...passage, state: "declined" },
+  );
+}
+
 /** An unknown with no slot in the procedure: it stands for the whole field, not one step. */
 function isFieldLevelUnknown(session: SopSession, claim: Claim): boolean {
   return claim.status === "unknown" && !session.procedureOrder.includes(claim.claimId);
@@ -178,6 +277,7 @@ function applyRecord(
   command: RecordClaimCommand,
   context: WriteContext,
 ): ApplyClaimResult {
+  const answer = command.documentPassage ?? null;
   if (!STATUSES_WRITABLE_BY[command.createdByType].includes(command.status)) {
     return failure(
       "status_not_allowed_for_creator",
@@ -220,6 +320,15 @@ function applyRecord(
     }
   }
 
+  const answerError = checkPassageAnswer(session, answer, {
+    field: command.field,
+    statement,
+    status: command.status,
+    sourceMessageId: command.sourceMessageId,
+    previousText: null,
+  });
+  if (answerError !== null) return { ok: false, error: answerError };
+
   const duplicate = findRecordedDuplicate(session, command, statement);
   if (duplicate !== undefined) {
     const isIdentical =
@@ -251,6 +360,7 @@ function applyRecord(
     note: text.note,
     createdByType: command.createdByType,
     conflictsWithClaimId: null,
+    basedOnPassageId: answer?.userAgrees ? answer.passageId : null,
     createdAt: timestamp,
     updatedAt: timestamp,
   };
@@ -275,6 +385,7 @@ function applyRecord(
     claims: [...session.claims, claim],
     procedureOrder,
     claimHistory: session.claimHistory,
+    references: referencesAfterAnswer(session.references, answer, claim.claimId),
   };
   const limitError = checkSessionLimits(session, changes);
   if (limitError !== null) return { ok: false, error: limitError };
@@ -287,6 +398,7 @@ function applyCorrect(
   command: CorrectClaimCommand,
   context: WriteContext,
 ): ApplyClaimResult {
+  const answer = command.documentPassage ?? null;
   const previous = session.claims.find((claim) => claim.claimId === command.claimId);
   if (previous === undefined) {
     return failure("target_claim_not_found", "There is no active claim with that id.");
@@ -312,7 +424,17 @@ function applyCorrect(
     return failure("source_message_not_found", "The claim must cite an existing user message.");
   }
 
+  const answerError = checkPassageAnswer(session, answer, {
+    field: previous.field,
+    statement,
+    status: "observed",
+    sourceMessageId: command.sourceMessageId,
+    previousText: previous.value?.text ?? null,
+  });
+  if (answerError !== null) return { ok: false, error: answerError };
+
   if (
+    answer === null &&
     previous.status === "observed" &&
     previous.value !== null &&
     normalizeStatement(previous.value.text) === normalizeStatement(statement) &&
@@ -335,6 +457,8 @@ function applyCorrect(
     authority: provenance.authority,
     effectiveDate: text.effectiveDate,
     note: text.note,
+    // The new wording is the user's. It rests on a passage only when it answers one now.
+    basedOnPassageId: answer?.userAgrees ? answer.passageId : null,
     updatedAt: timestamp,
   };
 
@@ -355,6 +479,7 @@ function applyCorrect(
         previous.status === "unknown" ? "answered_unknown" : "corrected",
       ),
     ],
+    references: referencesAfterAnswer(session.references, answer, claim.claimId),
   };
   const limitError = checkSessionLimits(session, changes);
   if (limitError !== null) return { ok: false, error: limitError };
@@ -456,6 +581,7 @@ function applyMarkUnknown(
       note: text.note,
       createdByType: command.createdByType,
       conflictsWithClaimId: null,
+      basedOnPassageId: null,
       createdAt: timestamp,
       updatedAt: timestamp,
     };
@@ -498,6 +624,7 @@ function applyMarkUnknown(
     authority: provenance.authority,
     effectiveDate: null,
     note: text.note,
+    basedOnPassageId: null,
     updatedAt: timestamp,
   };
   const changes: SessionChanges = {
@@ -599,8 +726,6 @@ export function applyClaim(
       return pairConflictsAfterWrite(applyRecord(session, command, context), context);
     case "correct":
       return pairConflictsAfterWrite(applyCorrect(session, command, context), context);
-    case "ingestExtracted":
-      return pairConflictsAfterWrite(applyIngestExtracted(session, command, context), context);
     case "resolveConflict":
       return pairConflictsAfterWrite(applyResolveConflict(session, command, context), context);
     case "markUnknown":

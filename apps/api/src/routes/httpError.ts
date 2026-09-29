@@ -16,6 +16,8 @@ export const HTTP_ERROR_MESSAGES: Record<HttpErrorCode, string> = {
     "That document could not be read. It may be encrypted, damaged, or too complex.",
   model_unavailable: "The document reader is unavailable right now. Try again in a moment.",
   extraction_busy: "Another document is being read. Try again in a moment.",
+  sop_target_missing:
+    "First tell the assistant which process this SOP covers, then upload the document.",
   internal_error: "Something went wrong on the server.",
 };
 

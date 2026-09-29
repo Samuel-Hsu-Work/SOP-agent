@@ -1,12 +1,18 @@
 import { MAX_UPLOAD_BYTES } from "@sop-agent/sop-core";
+import { createDeterministicContext, createSessionWithTarget } from "@sop-agent/sop-core/testing";
 import { describe, expect, it } from "vitest";
-import { checkFileBeforeUpload, requestDocumentExtraction } from "./extractDocument.ts";
+import { checkFileBeforeUpload, requestDocumentReferences } from "./extractDocument.ts";
+
+const session = createSessionWithTarget(createDeterministicContext(), {
+  purpose: ["Describe how payments are approved."],
+  scope: ["Applies to every vendor payment."],
+});
 
 const file = new File(["# Rules\nPayments need approval."], "policy.md", { type: "text/markdown" });
 
 const successBody = {
   document: { fileName: "policy.md", fileKind: "markdown", sectionCount: 1, characterCount: 30 },
-  claims: [
+  passages: [
     {
       field: "authorization",
       statement: "Payments need approval.",
@@ -19,14 +25,16 @@ const successBody = {
     },
   ],
   rejected: { count: 0, reasons: {} },
+  alreadyKnownCount: 0,
   truncatedCount: 0,
 };
 
 function run(respond: () => Promise<Response>) {
   const calls: { url: string; init: RequestInit | undefined }[] = [];
-  const result = requestDocumentExtraction({
+  const result = requestDocumentReferences({
     apiBaseUrl: "http://api.test",
     file,
+    session,
     fetchImplementation: async (url, init) => {
       calls.push({ url: String(url), init });
       return respond();
@@ -35,20 +43,21 @@ function run(respond: () => Promise<Response>) {
   return { result, calls };
 }
 
-describe("requestDocumentExtraction", () => {
-  it("sends the file alone as a multipart form and returns the validated drafts", async () => {
+describe("requestDocumentReferences", () => {
+  it("sends the session, then the file, as a multipart form and returns the validated passages", async () => {
     const { result, calls } = run(async () => Response.json(successBody));
     const outcome = await result;
 
-    expect(calls[0]?.url).toBe("http://api.test/documents/extract");
+    expect(calls[0]?.url).toBe("http://api.test/documents/references");
     expect(calls[0]?.init?.method).toBe("POST");
     const form = calls[0]?.init?.body as FormData;
-    expect([...form.keys()]).toEqual(["file"]);
+    expect([...form.keys()]).toEqual(["session", "file"]);
+    expect(JSON.parse(String(form.get("session")))).toEqual(session);
     expect((form.get("file") as File).name).toBe("policy.md");
     // No content-type header is set by hand: the browser adds the multipart boundary.
     expect(calls[0]?.init?.headers).toBeUndefined();
     expect(outcome.kind).toBe("received");
-    if (outcome.kind === "received") expect(outcome.response.claims).toHaveLength(1);
+    if (outcome.kind === "received") expect(outcome.response.passages).toHaveLength(1);
   });
 
   it("says the server could not be reached when the network fails", async () => {
@@ -82,7 +91,7 @@ describe("requestDocumentExtraction", () => {
   it("does not use a response that is not what the contract promises", async () => {
     const withStatus = {
       ...successBody,
-      claims: [{ ...successBody.claims[0], field: "everything" }],
+      passages: [{ ...successBody.passages[0], field: "everything" }],
     };
     const { result } = run(async () => Response.json(withStatus));
     expect(await result).toEqual({

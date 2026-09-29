@@ -5,7 +5,7 @@ import { type FieldClass, SOP_FIELDS, type SopFieldName } from "./sopFields.ts";
 /**
  * A field's state comes from its claims:
  * - empty: it has no claims;
- * - unresolved: at least one claim is `unknown`, `conflict`, or `extracted`;
+ * - unresolved: at least one claim is `unknown` or `conflict`;
  * - resolved: anything else. `observed` and `proposed` claims never leave a field unresolved.
  */
 export type FieldState = "empty" | "unresolved" | "resolved";
@@ -26,8 +26,7 @@ export interface FieldReadiness {
   gap: FieldGap | null;
   /**
    * Whether the agent may still ask about this field. A gap the user already answered "I don't
-   * know" to, or one that only awaits a document review, is not askable, so the agent does not
-   * pester. An empty field or one with a conflict is.
+   * know" to is not askable, so the agent does not pester. An empty field or one with a conflict is.
    */
   askable: boolean;
 }
@@ -60,10 +59,8 @@ export function computeGaps(session: SopSession): GapReport {
     const gap: FieldGap | null =
       state === "resolved" ? null : { severity: definition.fieldClass, reason: state };
 
-    const isOnlyUnknownOrExtracted = unresolvedClaims.every(
-      (claim) => claim.status === "unknown" || claim.status === "extracted",
-    );
-    const askable = gap !== null && (state === "empty" || !isOnlyUnknownOrExtracted);
+    const isOnlyUnknown = unresolvedClaims.every((claim) => claim.status === "unknown");
+    const askable = gap !== null && (state === "empty" || !isOnlyUnknown);
 
     return {
       field: definition.name,

@@ -189,9 +189,73 @@ Payments above $25,000 still require both the budget owner and the CFO.
 This memo replaces the $10,000 threshold in the Vendor Payment Policy.
 `;
 
-export function buildRefundPolicyPdf(): Promise<Buffer> {
+/*
+ * A store-wide policy much broader than any one SOP, modelled on a manual test: someone writing a
+ * cashier closing SOP uploaded a general store operations policy. Most of it is about other roles,
+ * about the document itself, or about the whole store; only the closing section serves that SOP, and
+ * only the opening section serves a store opening SOP. `relevance-key.json` scores both targets.
+ */
+const northstarPolicyPages: { title?: string; sections: FixtureSection[] }[] = [
+  {
+    title:
+      "Northstar Market Group - Store Operations and Closing Policy (partial extract, rev. 4, effective 2025-02-01)",
+    sections: [
+      {
+        heading: "1. About this policy",
+        paragraphs: [
+          "This policy applies to retail store operations at all Northstar Market locations.",
+          "This policy does not prescribe step-by-step procedures for individual roles; each department maintains its own procedures.",
+          "Store Operations owns this policy document and publishes each revision on the intranet.",
+          "Store Managers review proposed changes to this policy every quarter.",
+        ],
+      },
+      {
+        heading: "2. Store hours",
+        paragraphs: [
+          "Stores open to customers at 7:00 AM and close to customers at 11:00 PM, seven days a week.",
+        ],
+      },
+      {
+        heading: "3. Opening the store",
+        paragraphs: [
+          "The opening team arrives 30 minutes before the store opens to customers.",
+          "Two employees must be present when the alarm is disarmed.",
+          "The opening Team Lead counts the $150 starting float in each register before the first register opens.",
+        ],
+      },
+    ],
+  },
+  {
+    sections: [
+      {
+        heading: "4. Closing the front end",
+        paragraphs: [
+          "Front-end cashiers stop accepting new transactions at 11:00 PM, when the store closes to customers.",
+          "Cashiers are expected to finish their closing duties and clock out by 11:30 PM.",
+          "If closing work continues more than 15 minutes past the scheduled clock-out time, the Team Lead records the reason in the shift log.",
+          "A cashier who is unsure how to complete a closing task asks the Team Lead on duty before continuing.",
+          "The Team Lead may change the order of closing tasks or defer non-urgent tasks to the opening team.",
+          "Employees are not required to remain after their scheduled shift to finish deferred tasks.",
+        ],
+      },
+      {
+        heading: "5. General conduct",
+        paragraphs: [
+          "Only cleaning products approved by Store Operations may be used on registers and food-contact surfaces.",
+          "Employees report unsafe conditions to the manager on duty immediately.",
+          "Customer receipts and cash must never be left unattended at a register.",
+          "Employees wear their name badge at all times while on the sales floor.",
+        ],
+      },
+    ],
+  },
+];
+
+function buildPagedPolicyPdf(
+  pages: readonly { title?: string; sections: FixtureSection[] }[],
+): Promise<Buffer> {
   return buildPdf((pdf) => {
-    refundPolicyPages.forEach((page, pageIndex) => {
+    pages.forEach((page, pageIndex) => {
       if (pageIndex > 0) pdf.addPage();
       if (page.title) pdf.font("Helvetica-Bold").fontSize(16).text(page.title).moveDown();
       for (const section of page.sections) {
@@ -203,6 +267,14 @@ export function buildRefundPolicyPdf(): Promise<Buffer> {
       }
     });
   });
+}
+
+export function buildRefundPolicyPdf(): Promise<Buffer> {
+  return buildPagedPolicyPdf(refundPolicyPages);
+}
+
+export function buildNorthstarStorePolicyPdf(): Promise<Buffer> {
+  return buildPagedPolicyPdf(northstarPolicyPages);
 }
 
 export function buildExpenseHandbookDocx(): Promise<Buffer> {

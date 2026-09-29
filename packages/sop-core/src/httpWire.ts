@@ -12,6 +12,7 @@ export const HTTP_ERROR_CODES = [
   "document_unreadable",
   "model_unavailable",
   "extraction_busy",
+  "sop_target_missing",
   "internal_error",
 ] as const;
 

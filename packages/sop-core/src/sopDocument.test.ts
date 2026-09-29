@@ -121,14 +121,7 @@ describe("buildSopDocument", () => {
 
   it("tags every status with its own name in brackets, and marks the open ones", () => {
     const { session, handBuilt } = setup();
-    const statuses: ClaimStatus[] = [
-      "confirmed",
-      "observed",
-      "proposed",
-      "unknown",
-      "conflict",
-      "extracted",
-    ];
+    const statuses: ClaimStatus[] = ["confirmed", "observed", "proposed", "unknown", "conflict"];
     const claims = statuses.map((status) =>
       handBuilt(status, {
         field: "controls",
@@ -160,7 +153,6 @@ describe("buildSopDocument", () => {
       ["proposed", false],
       ["unknown", true],
       ["conflict", true],
-      ["extracted", true],
     ]);
     expect(document.legend.map((entry) => entry.tag)).toEqual(
       statuses.map((status) => `[${status}]`),
@@ -178,7 +170,9 @@ describe("buildSopDocument", () => {
     const unrelated = buildClaim({
       claimId: "b",
       field: "controls",
-      status: "extracted",
+      status: "unknown",
+      value: null,
+      authority: "unknown",
     });
     const claimC = buildClaim({
       claimId: "c",

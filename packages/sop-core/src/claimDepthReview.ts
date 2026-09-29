@@ -18,13 +18,12 @@ import type { WriteContext } from "./writeContext.ts";
 
 /**
  * Whether the procedure field is currently one `buildInterviewAgenda` puts in "doNotAsk": it has an
- * unresolved claim (awaiting a document review, or one the person already said they do not know)
- * that is not itself askable. A resolved field with no gap at all is not in "doNotAsk" either
- * (`readiness.askable` is only meaningful once `readiness.gap` is non-null — a fully resolved field
- * has neither), so this checks both, not `askable` alone, or every ordinary, fully-stated procedure
- * would wrongly count as excluded. Asking about one specific step while the field is in "doNotAsk"
- * anyway would directly contradict that instruction, or surface a step the person has not had a
- * chance to review yet. Scoped to the one field this review ever targets.
+ * unresolved claim the person already said they do not know, and nothing askable. A resolved field
+ * with no gap at all is not in "doNotAsk" either (`readiness.askable` is only meaningful once
+ * `readiness.gap` is non-null — a fully resolved field has neither), so this checks both, not
+ * `askable` alone, or every ordinary, fully-stated procedure would wrongly count as excluded.
+ * Asking about one specific step while the field is in "doNotAsk" anyway would directly contradict
+ * that instruction. Scoped to the one field this review ever targets.
  */
 function procedureFieldIsInDoNotAsk(session: SopSession): boolean {
   const readiness = computeGaps(session).fields.find((entry) => entry.field === "procedure");
@@ -94,9 +93,8 @@ export function currentClaimDepthReview(session: SopSession) {
 /**
  * Whether a claim-depth review should run now. It never runs on an approved session, while an
  * unresolved conflict exists (settling a disagreement takes priority over a new question), while
- * the procedure field itself is in "doNotAsk" (a claim there is awaiting a document review, or the
- * person already said they do not know — asking about one specific step anyway would contradict
- * that instruction), while the person has said they are out of time, once the session's question
+ * the procedure field itself is in "doNotAsk" (the person already said they do not know — asking
+ * about one specific step anyway would contradict that instruction), while the person has said they are out of time, once the session's question
  * budget is spent, when there are no candidates at all, or when the review on file already saw
  * these candidates.
  */

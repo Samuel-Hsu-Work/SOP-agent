@@ -23,15 +23,27 @@ export const MAX_TOOL_CALLS_PER_MESSAGE = 48;
  * The most text all active claims and notes may hold together. The per-item limits alone allow a
  * session far larger than any prompt should be, so this bounds it. A session over the cap is
  * refused, never truncated, because every claim has to stay addressable for corrections. A document
- * claim's citation counts too.
+ * claim's citation counts too, and so does the reference material from uploaded documents.
  */
 export const MAX_TOTAL_CLAIM_TEXT = 60_000;
 
-/** The citation a document claim carries. The quote is verified against the document by the API. */
+/** The citation a reference passage carries. The quote is verified against the document by the API. */
 export const MIN_QUOTE_LENGTH = 15;
 export const MAX_QUOTE_LENGTH = 300;
 export const MAX_DOCUMENT_NAME_LENGTH = 200;
 export const MAX_DOCUMENT_LOCATION_LENGTH = 120;
+
+/**
+ * Reference material from uploaded documents. A document gives only the few passages that serve the
+ * SOP being written, so these stay small: the whole store rides along in every request.
+ */
+export const MAX_REFERENCE_DOCUMENTS = 5;
+export const MAX_PASSAGES_PER_UPLOAD = 8;
+export const MAX_REFERENCE_PASSAGES = 24;
+/** A passage's statement is one short sentence for this SOP, not a paraphrase of a whole section. */
+export const MAX_PASSAGE_STATEMENT_LENGTH = 240;
+/** How many passages the agent is handed at once: one question, two facts at most. */
+export const MAX_DOCUMENT_PASSAGES_SHOWN = 2;
 
 /**
  * The most a serialized session may weigh in the browser. Every chat and PDF request carries the

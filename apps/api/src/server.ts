@@ -9,7 +9,7 @@ import Fastify, {
 import pino from "pino";
 import type { ModelClient } from "./model/modelClient.ts";
 import { registerChatRoute } from "./routes/chat.ts";
-import { registerDocumentExtractRoute } from "./routes/documentExtract.ts";
+import { registerDocumentReferencesRoute } from "./routes/documentReferences.ts";
 import { HTTP_ERROR_MESSAGES, httpError } from "./routes/httpError.ts";
 import { registerSopPdfRoute } from "./routes/sopPdf.ts";
 
@@ -89,7 +89,10 @@ export async function buildServer(deps: ServerDependencies): Promise<FastifyInst
 
   registerSopPdfRoute(app);
 
-  await registerDocumentExtractRoute(app, { modelClient: deps.modelClient, models: deps.models });
+  await registerDocumentReferencesRoute(app, {
+    modelClient: deps.modelClient,
+    models: deps.models,
+  });
 
   return app;
 }

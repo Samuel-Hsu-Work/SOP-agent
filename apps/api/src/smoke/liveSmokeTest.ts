@@ -1,5 +1,5 @@
 /**
- * Live smoke test: do the five claim tools work end to end on each configured model, with the state
+ * Live smoke test: do the claim tools work end to end on each configured model, with the state
  * item sent last?
  *
  *   pnpm smoke:api
@@ -21,6 +21,7 @@ import {
   systemWriteContext,
   type UserMessage,
 } from "@sop-agent/sop-core";
+import { createDeterministicContext, createSessionWithTarget } from "@sop-agent/sop-core/testing";
 import OpenAI from "openai";
 import {
   CLAIM_DEPTH_REVIEW_INSTRUCTIONS,
@@ -35,8 +36,8 @@ import {
   renderConsistencyReviewInput,
 } from "../agent/consistencyReview.ts";
 import { runAgentTurn } from "../agent/runTurn.ts";
-import { extractClaimDrafts } from "../documents/extractClaimDrafts.ts";
 import { parseDocument } from "../documents/parseDocument.ts";
+import { readReferencePassages } from "../documents/readReferencePassages.ts";
 import type { ModelFailureKind } from "../logging.ts";
 import { readModelsFromEnvironment } from "../model/modelFallback.ts";
 import { createOpenAiModelClient } from "../model/openaiModelClient.ts";
@@ -221,35 +222,41 @@ for (const model of models) {
 }
 
 /**
- * One document extraction per model: the structured-output call the upload route uses, on a tiny
- * document, with the quote check applied to whatever comes back.
+ * One document reading per model: the structured-output call the upload route uses, on a tiny
+ * document, for a session that says what its SOP is about, with the quote check applied to
+ * whatever comes back.
  */
 const SMOKE_DOCUMENT =
   "# Vendor Payment Policy\n\n## Approval authority\n\nEvery vendor payment above $10,000 requires the written approval of two people: the budget owner and the CFO.\n\n## Records\n\nFinance stores the invoice, the purchase order and both approvals for seven years.\n";
+const SMOKE_TARGET = createSessionWithTarget(createDeterministicContext(), {
+  purpose: ["Describe how a vendor payment is approved and paid."],
+  scope: ["Applies to every payment Finance makes to an external vendor."],
+});
 
 for (const model of models) {
-  const label = `${model} | reads a document`;
+  const label = `${model} | reads a document for this SOP`;
   try {
     const parsed = await parseDocument({
       bytes: Buffer.from(SMOKE_DOCUMENT, "utf8"),
       fileName: "vendor-payment-policy.md",
     });
     const failedAttempts: { model: string; kind: ModelFailureKind }[] = [];
-    const outcome = await extractClaimDrafts({
+    const outcome = await readReferencePassages({
       client,
       models: [model],
       sections: parsed.sections,
       documentName: "vendor-payment-policy.md",
+      session: SMOKE_TARGET,
       signal: new AbortController().signal,
       failedAttempts,
     });
-    if (outcome.drafts.length === 0) throw new Error("expected at least one verified claim");
+    if (outcome.passages.length === 0) throw new Error("expected at least one verified passage");
     console.log(`\nPASS  ${label}`);
-    for (const draft of outcome.drafts) {
-      console.log(`  ${draft.field}: ${draft.statement}`);
+    for (const passage of outcome.passages) {
+      console.log(`  ${passage.field}: ${passage.statement}`);
     }
     console.log(
-      `  proposed ${outcome.proposedCount}, verified ${outcome.drafts.length}, rejected ${outcome.rejected.count} | tokens ${outcome.inputTokens} in, ${outcome.outputTokens} out`,
+      `  proposed ${outcome.proposedCount}, kept ${outcome.passages.length}, rejected ${outcome.rejected.count} | tokens ${outcome.inputTokens} in, ${outcome.outputTokens} out`,
     );
   } catch (error) {
     failures += 1;

@@ -31,8 +31,8 @@ export function statesOutOfTime(userMessage: string): boolean {
 /**
  * The claims a consistency review reads: what the person stated (observed or confirmed), with the
  * procedure's steps in their real order. A suggestion is not the person's word, an unknown has no
- * text, and a document claim is left out on purpose: text from an upload does not decide what the
- * agent asks.
+ * text, and a passage from an upload is not a claim at all until the person agrees with it, when it
+ * is their own statement.
  */
 export function statedClaimsInReadingOrder(session: SopSession): Claim[] {
   const isStated = (claim: Claim) =>
@@ -97,8 +97,8 @@ function isReadyToBeReadAsAWhole(session: SopSession): boolean {
   return (
     session.status === "draft" &&
     computeGaps(session).blockingGapCount === 0 &&
-    // An unreviewed document rule or an unanswered conflict means the SOP is still being settled.
-    !session.claims.some((claim) => claim.status === "extracted" || claim.status === "conflict")
+    // An unanswered conflict means the SOP is still being settled.
+    !session.claims.some((claim) => claim.status === "conflict")
   );
 }
 

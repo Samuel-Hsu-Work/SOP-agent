@@ -76,7 +76,7 @@ describe("renderSopPdf", () => {
       }
     }
     expect(expectedTagCount).toBeGreaterThan(0);
-    for (const tag of ["[confirmed]", "[observed]", "[unknown]", "[conflict]", "[extracted]"]) {
+    for (const tag of ["[confirmed]", "[observed]", "[unknown]", "[conflict]"]) {
       const inClaims = document.sections
         .flatMap((section) => section.items)
         .filter((item) => item.provenanceTag === tag).length;

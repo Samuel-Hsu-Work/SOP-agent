@@ -15,6 +15,7 @@ import {
   MAX_STATEMENT_LENGTH,
   MAX_TOTAL_CLAIM_TEXT,
 } from "./limits.ts";
+import { type ReferenceMaterial, totalReferenceTextLength } from "./referenceSchema.ts";
 import type { ClaimChange, ClaimHistoryEntry, HistoryReason, SopSession } from "./session.ts";
 import type { SopFieldName } from "./sopFields.ts";
 import type { WriteContext } from "./writeContext.ts";
@@ -39,10 +40,11 @@ import type { WriteContext } from "./writeContext.ts";
  */
 export const STATUSES_WRITABLE_BY: Readonly<Record<CreatorType, readonly ClaimStatus[]>> = {
   agent: AGENT_WRITABLE_STATUSES,
-  // What a person's review action can produce: confirming, or stepping a claim back to what it
-  // was, which can be an extracted claim.
-  user: ["confirmed", "observed", "proposed", "unknown", "extracted"],
-  extraction: ["extracted"],
+  // What a person's review action can produce: confirming, or stepping a claim back to what it was.
+  user: ["confirmed", "observed", "proposed", "unknown"],
+  // A document states nothing on its own: its only claim is the document side of a conflict, and
+  // `conflict` is applied by conflict detection, never asked for.
+  extraction: [],
 };
 
 export interface ClaimWriteError {
@@ -62,6 +64,12 @@ export interface SessionChanges {
   claims: Claim[];
   procedureOrder: string[];
   claimHistory: ClaimHistoryEntry[];
+  /** Only when the write also changes a passage: using it, declining it, or raising a conflict. */
+  references?: ReferenceMaterial | undefined;
+}
+
+function totalTextLength(claims: readonly Claim[], references: ReferenceMaterial): number {
+  return totalClaimTextLength(claims) + totalReferenceTextLength(references);
 }
 
 /** Refuses a result that would break a session-wide limit. Returns null when it fits. */
@@ -78,8 +86,9 @@ export function checkSessionLimits(
   if (changes.claimHistory.length > MAX_HISTORY_ENTRIES) {
     return { code: "session_limit_reached", message: "The session history is full." };
   }
-  const isGrowing = totalClaimTextLength(changes.claims) > totalClaimTextLength(session.claims);
-  if (isGrowing && totalClaimTextLength(changes.claims) > MAX_TOTAL_CLAIM_TEXT) {
+  const before = totalTextLength(session.claims, session.references);
+  const after = totalTextLength(changes.claims, changes.references ?? session.references);
+  if (after > before && after > MAX_TOTAL_CLAIM_TEXT) {
     return {
       code: "session_limit_reached",
       message: "The session already holds the maximum amount of claim text.",
@@ -97,7 +106,15 @@ export function commit(
   changes: SessionChanges,
   timestamp: string,
 ): SopSession {
-  return { ...session, updatedAt: timestamp, ...changes, advisoryAcknowledgements: [] };
+  return {
+    ...session,
+    updatedAt: timestamp,
+    claims: changes.claims,
+    procedureOrder: changes.procedureOrder,
+    claimHistory: changes.claimHistory,
+    references: changes.references ?? session.references,
+    advisoryAcknowledgements: [],
+  };
 }
 
 interface HistoryEntryInput {

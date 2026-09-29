@@ -20,7 +20,13 @@ const SPELLED_NUMBERS = [
   "ten",
   "eleven",
   "twelve",
+  "thirteen",
+  "fourteen",
   "fifteen",
+  "sixteen",
+  "seventeen",
+  "eighteen",
+  "nineteen",
   "twenty",
   "thirty",
   "forty",
@@ -32,6 +38,7 @@ const SPELLED_NUMBERS = [
   "hundred",
   "thousand",
   "million",
+  "billion",
   "dozen",
 ];
 const QUANTITY_PATTERN = new RegExp(
@@ -44,6 +51,28 @@ export function quantitiesIn(text: string): Set<string> {
   return new Set(
     [...text.matchAll(QUANTITY_PATTERN)].map((match) => match[0].toLowerCase().replace(/,/g, "")),
   );
+}
+
+/**
+ * The numbers a statement states, for the provenance check. "one" counts here, unlike in
+ * `quantitiesIn` (where "no one" and "one of them" would make every sentence look numeric): a
+ * statement that says "one manager" when its source does not has added a figure.
+ */
+function statedNumbersIn(text: string): Set<string> {
+  const numbers = quantitiesIn(text);
+  if (/\bone\b/i.test(text)) numbers.add("one");
+  return numbers;
+}
+
+/**
+ * Whether every number in `statement` also appears in one of `sources`. A statement written from a
+ * document passage may reword it, but a figure it states must come from the passage's quote or from
+ * what the user said, never from the writer. A figure written differently ("2" for "two") is refused
+ * too: the check errs toward refusing a statement, not toward letting a figure through.
+ */
+export function areNumbersSupported(statement: string, sources: readonly string[]): boolean {
+  const available = new Set(sources.flatMap((source) => [...statedNumbersIn(source)]));
+  return [...statedNumbersIn(statement)].every((quantity) => available.has(quantity));
 }
 
 /** Words that say nothing about what a statement is about. Comparison words are here too: "above" is not a topic. */

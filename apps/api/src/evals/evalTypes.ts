@@ -7,14 +7,19 @@ export type SeedStep =
   | { kind: "unknown"; field: SopFieldName; note: string }
   /** A claim a person has confirmed, built through the review action like a real one. */
   | { kind: "confirmed"; field: SopFieldName; statement: string }
-  /** A rule read from a document, built through the ingestion command like a real one. */
+  /**
+   * A passage an uploaded document holds for this SOP, kept through the real upload path (so a
+   * disagreement with what the expert said is raised as a conflict). The seed must state a purpose
+   * or scope first. `offered` marks it as already put to the expert on an earlier turn.
+   */
   | {
-      kind: "extracted";
+      kind: "reference";
       field: SopFieldName;
       statement: string;
       documentName?: string;
-      /** Defaults to text that says the statement, which is all a scenario needs. */
+      /** Defaults to the statement itself, which is all a scenario needs. */
       quote?: string;
+      offered?: boolean;
     };
 
 /**

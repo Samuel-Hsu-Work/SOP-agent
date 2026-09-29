@@ -5,8 +5,11 @@
 import {
   applyClaim,
   type ClaimWriteCommand,
+  declineDocumentPassage,
+  markDocumentPassagesOffered,
   type SopFieldName,
   type SopSession,
+  selectDocumentPassages,
 } from "@sop-agent/sop-core";
 import { createDeterministicContext } from "@sop-agent/sop-core/testing";
 import type { SeedStep, Transcript, TranscriptTurn } from "./evalTypes.ts";
@@ -21,6 +24,8 @@ export interface FixtureTurn {
   reply: string;
   /** Applied to the session in order, citing the turn's user message. */
   commands?: (Partial<ClaimWriteCommand> & { kind: ClaimWriteCommand["kind"] })[];
+  /** Passages the agent declined this turn, by id, applied after the commands. */
+  declinedPassageIds?: string[];
   failure?: string;
 }
 
@@ -58,6 +63,20 @@ export function buildTranscript(input: {
       if (!result.ok) throw new Error(`fixture failed: ${result.error.code}`);
       session = result.session;
     }
+    for (const passageId of fixture.declinedPassageIds ?? []) {
+      const result = declineDocumentPassage(
+        session,
+        { kind: "declineDocumentPassage", createdByType: "agent", passageId },
+        context,
+      );
+      if (!result.ok) throw new Error(`fixture failed: ${result.error.code}`);
+      session = result.session;
+    }
+    // As a real turn does: what the state handed the agent this turn counts as put to the expert.
+    session = markDocumentPassagesOffered(
+      session,
+      selectDocumentPassages(session).map((passage) => passage.passageId),
+    );
     turns.push({
       expertLine: fixture.expertLine ?? "An expert line.",
       assistantText: fixture.failure === undefined ? fixture.reply : null,

@@ -1,4 +1,5 @@
 import {
+  addReferenceDocument,
   applyClaim,
   type ClaimWriteCommand,
   CONSISTENCY_CATEGORIES,
@@ -8,6 +9,7 @@ import {
   sopSessionSchema,
 } from "@sop-agent/sop-core";
 import {
+  buildReferenceUpload,
   createDeterministicContext,
   createSessionWithUserMessage,
 } from "@sop-agent/sop-core/testing";
@@ -272,22 +274,20 @@ describe("the consistency review inside a turn", () => {
     expect(stateOf(client.requests[0]?.stateItem).consistencyQuestion).toBeNull();
   });
 
-  it("does not review while a document rule waits for the person's review", async () => {
-    const { apply, fullSession, run } = setup();
-    const withDocument = apply(fullSession(), {
-      kind: "ingestExtracted",
-      createdByType: "extraction",
-      field: "evidence",
-      statement: "Invoices are kept for seven years.",
-      citation: {
-        documentName: "policy.md",
-        location: "§ Records",
-        quote: "Invoices are kept for seven years.",
-      },
-      effectiveDate: null,
-      note: null,
-    });
-    const { client, promise } = run([textStep("Noted.")], [], withDocument);
+  it("does not review while a conflict with a document waits for the person's answer", async () => {
+    const { fullSession, run, context } = setup();
+    const uploaded = addReferenceDocument(
+      fullSession(),
+      buildReferenceUpload("policy.md", [
+        {
+          field: "authorization",
+          statement: "Managers up to $5,000, and above that the Finance Director.",
+        },
+      ]),
+      context,
+    );
+    if (!uploaded.ok || uploaded.conflictsRaised !== 1) throw new Error("setup failed");
+    const { client, promise } = run([textStep("Noted.")], [], uploaded.session);
     await promise;
     expect(client.extractionRequests).toHaveLength(0);
   });

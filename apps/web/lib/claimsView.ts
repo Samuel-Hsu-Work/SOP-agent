@@ -7,6 +7,7 @@ import {
   type FieldClass,
   type FieldGap,
   type FieldState,
+  findPassage,
   type HistoryReason,
   reviewActionsFor,
   type SopFieldName,
@@ -19,7 +20,6 @@ const STATUS_LABELS: Record<ClaimStatus, string> = {
   proposed: "Suggested by the agent",
   unknown: "Unknown",
   conflict: "Conflict",
-  extracted: "Extracted from a document",
 };
 
 const HISTORY_REASON_LABELS: Record<HistoryReason, string> = {
@@ -58,7 +58,10 @@ export interface ClaimView {
   text: string | null;
   note: string | null;
   effectiveDate: string | null;
-  /** The document and quote behind a claim read from a document. Null for anything said in the interview. */
+  /**
+   * The document and quote behind the claim: the document side of a conflict, or a passage the
+   * user agreed with. Null for anything said in the interview with no document behind it.
+   */
   citation: DocumentCitation | null;
   /** Who this claim came from, in the words a person uses: the user, the assistant, or a document. */
   sourceLabel: string;
@@ -109,10 +112,18 @@ function toVersionView(entry: ClaimHistoryEntry): ClaimVersionView {
   };
 }
 
-function sourceLabelFor(claim: Claim): string {
+function citationFor(session: SopSession, claim: Claim): DocumentCitation | null {
+  if (claim.source.reference.kind === "document") return claim.source.reference.citation;
+  if (claim.basedOnPassageId === null) return null;
+  return findPassage(session, claim.basedOnPassageId)?.citation ?? null;
+}
+
+function sourceLabelFor(claim: Claim, citation: DocumentCitation | null): string {
   switch (claim.source.type) {
     case "employee_statement":
-      return "What you said";
+      return citation === null
+        ? "What you said"
+        : `What you said, based on ${citation.documentName}`;
     case "agent_suggestion":
       return "The assistant's suggestion";
     case "policy_document":
@@ -149,19 +160,22 @@ export function buildClaimsView(session: SopSession): FieldClaimsView[] {
 
   return computeGaps(session).fields.map((readiness) => {
     const claims = orderClaims(session.claims.filter((claim) => claim.field === readiness.field));
-    const toClaimView = (claim: Claim): ClaimView => ({
-      claimId: claim.claimId,
-      stepNumber: stepNumbers.get(claim.claimId) ?? null,
-      status: claim.status,
-      statusLabel: STATUS_LABELS[claim.status],
-      text: claim.value?.text ?? null,
-      note: claim.note,
-      effectiveDate: claim.effectiveDate,
-      citation: claim.source.reference.kind === "document" ? claim.source.reference.citation : null,
-      sourceLabel: sourceLabelFor(claim),
-      ...reviewActionsFor(claim),
-      rejectLabel: claim.status === "confirmed" ? "Withdraw confirmation" : "Reject",
-    });
+    const toClaimView = (claim: Claim): ClaimView => {
+      const citation = citationFor(session, claim);
+      return {
+        claimId: claim.claimId,
+        stepNumber: stepNumbers.get(claim.claimId) ?? null,
+        status: claim.status,
+        statusLabel: STATUS_LABELS[claim.status],
+        text: claim.value?.text ?? null,
+        note: claim.note,
+        effectiveDate: claim.effectiveDate,
+        citation,
+        sourceLabel: sourceLabelFor(claim, citation),
+        ...reviewActionsFor(claim),
+        rejectLabel: claim.status === "confirmed" ? "Withdraw confirmation" : "Reject",
+      };
+    };
 
     // A conflict is shown once, as a pair, and never as two unrelated claims.
     const pairedIds = new Set<string>();

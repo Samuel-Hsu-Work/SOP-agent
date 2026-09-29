@@ -343,8 +343,7 @@ summary.field-row:focus-visible {
   color: var(--blocking);
 }
 
-.claim-status-proposed,
-.claim-status-extracted {
+.claim-status-proposed {
   color: var(--advisory);
 }
 
@@ -699,6 +698,44 @@ button.link {
 
 .upload-error {
   color: var(--blocking);
+}
+
+.reference-document {
+  display: grid;
+  gap: 6px;
+}
+
+.reference-document-name {
+  margin: 0;
+  font-size: 0.9rem;
+}
+
+.reference-list {
+  display: grid;
+  gap: 10px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.reference-item {
+  padding-left: 10px;
+  border-left: 3px solid var(--line);
+}
+
+.reference-meta {
+  margin: 0;
+  color: var(--muted);
+  font-size: 0.8rem;
+}
+
+.reference-state.stale {
+  color: var(--advisory);
+}
+
+.reference-statement {
+  margin: 2px 0 0;
+  font-size: 0.9rem;
 }
 
 .citation {

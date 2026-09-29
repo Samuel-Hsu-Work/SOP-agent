@@ -7,6 +7,7 @@ import {
   UNRESOLVED_STATUSES,
 } from "./claim.ts";
 import { computeGaps, type FieldGap } from "./computeGaps.ts";
+import { findPassage } from "./referenceSchema.ts";
 import type { SessionStatus, SopSession } from "./session.ts";
 import { type FieldClass, SOP_FIELDS, type SopFieldName } from "./sopFields.ts";
 
@@ -24,7 +25,6 @@ export const PROVENANCE_TAGS: Readonly<Record<ClaimStatus, string>> = {
   proposed: "[proposed]",
   unknown: "[unknown]",
   conflict: "[conflict]",
-  extracted: "[extracted]",
 };
 
 const PROVENANCE_MEANINGS: Readonly<Record<ClaimStatus, string>> = {
@@ -33,7 +33,6 @@ const PROVENANCE_MEANINGS: Readonly<Record<ClaimStatus, string>> = {
   proposed: "Suggested by the assistant, not stated by the person interviewed.",
   unknown: "The person interviewed does not know. An open item, not an instruction.",
   conflict: "Sources disagree. An open item, not an instruction.",
-  extracted: "Read from a document and not checked yet. An open item, not an instruction.",
 };
 
 export type GapLabel = "blocking gap" | "advisory gap" | "gap acknowledged";
@@ -49,7 +48,10 @@ export interface SopDocumentItem {
   sourceType: SourceType;
   note: string | null;
   effectiveDate: string | null;
-  /** The document and quote behind a claim read from a document. Null for anything said in the interview. */
+  /**
+   * The document and quote behind the item: the document side of a conflict, or a passage the
+   * person agreed applies. Null for anything said in the interview with no document behind it.
+   */
   citation: DocumentCitation | null;
   /** The other half of a conflict, so a reader can pair the two sides. Null for any other status. */
   conflictsWithClaimId: string | null;
@@ -58,7 +60,7 @@ export interface SopDocumentItem {
    * An unknown item's note is its open-item text, so it is never repeated in this line.
    */
   sourceLine: string;
-  /** True for unknown, conflict and extracted: an open item that must not read as an instruction. */
+  /** True for unknown and conflict: an open item that must not read as an instruction. */
   isUnresolved: boolean;
 }
 
@@ -111,7 +113,14 @@ const SOURCE_LABELS: Readonly<Record<SourceType, string>> = {
  * instead of following it (which used to print the same sentence twice). A statement keeps its
  * label and appends the note. Decided by the claim's shape, never by comparing text.
  */
-function sourceLineFor(claim: Claim): string {
+/** The citation behind a claim: its own, on a document side, or the passage the person agreed with. */
+function citationFor(session: SopSession, claim: Claim): DocumentCitation | null {
+  if (claim.source.reference.kind === "document") return claim.source.reference.citation;
+  if (claim.basedOnPassageId === null) return null;
+  return findPassage(session, claim.basedOnPassageId)?.citation ?? null;
+}
+
+function sourceLineFor(claim: Claim, citation: DocumentCitation | null): string {
   const hasText = claim.value !== null;
   const { reference } = claim.source;
   const noteReplacesLabel =
@@ -119,9 +128,11 @@ function sourceLineFor(claim: Claim): string {
   const label =
     reference.kind === "document"
       ? `from ${reference.citation.documentName}, ${reference.citation.location}`
-      : noteReplacesLabel
-        ? claim.note
-        : SOURCE_LABELS[claim.source.type];
+      : citation !== null
+        ? `from the interview, based on ${citation.documentName}, ${citation.location}`
+        : noteReplacesLabel
+          ? claim.note
+          : SOURCE_LABELS[claim.source.type];
   const parts = [label];
   if (claim.effectiveDate !== null) parts.push(`effective ${claim.effectiveDate}`);
   if (claim.source.type !== "agent_suggestion" && hasText && claim.note !== null) {
@@ -202,8 +213,9 @@ export function buildSopDocument(session: SopSession): SopDocument {
       gapNotice: gapNoticeFor(gap),
       gapLabel: gapLabelFor(gap, isGapAcknowledged),
       isGapAcknowledged,
-      items: ordered.map(
-        (claim): SopDocumentItem => ({
+      items: ordered.map((claim): SopDocumentItem => {
+        const citation = citationFor(session, claim);
+        return {
           claimId: claim.claimId,
           position: stepPositions.get(claim.claimId) ?? null,
           text: claim.value?.text ?? null,
@@ -212,13 +224,12 @@ export function buildSopDocument(session: SopSession): SopDocument {
           sourceType: claim.source.type,
           note: claim.note,
           effectiveDate: claim.effectiveDate,
-          citation:
-            claim.source.reference.kind === "document" ? claim.source.reference.citation : null,
+          citation,
           conflictsWithClaimId: claim.conflictsWithClaimId,
-          sourceLine: sourceLineFor(claim),
+          sourceLine: sourceLineFor(claim, citation),
           isUnresolved: (UNRESOLVED_STATUSES as readonly ClaimStatus[]).includes(claim.status),
-        }),
-      ),
+        };
+      }),
     };
   });
 

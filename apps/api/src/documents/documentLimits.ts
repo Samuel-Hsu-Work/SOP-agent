@@ -3,7 +3,7 @@
  * time and model money, so each of these is checked before the work it guards, and a document over
  * a bound is refused with a named category, never truncated.
  */
-export { MAX_EXTRACTED_CLAIMS_PER_DOCUMENT, MAX_UPLOAD_BYTES } from "@sop-agent/sop-core";
+export { MAX_PASSAGES_PER_UPLOAD, MAX_UPLOAD_BYTES } from "@sop-agent/sop-core";
 
 export const MAX_PDF_PAGES = 60;
 export const MAX_SECTIONS = 200;

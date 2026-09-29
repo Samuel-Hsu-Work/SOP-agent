@@ -10,14 +10,7 @@ import {
 } from "./limits.ts";
 import { SOP_FIELD_NAMES } from "./sopFields.ts";
 
-export const CLAIM_STATUSES = [
-  "confirmed",
-  "observed",
-  "proposed",
-  "unknown",
-  "conflict",
-  "extracted",
-] as const;
+export const CLAIM_STATUSES = ["confirmed", "observed", "proposed", "unknown", "conflict"] as const;
 
 export type ClaimStatus = (typeof CLAIM_STATUSES)[number];
 
@@ -37,9 +30,12 @@ export type AgentWritableStatus = (typeof AGENT_WRITABLE_STATUSES)[number];
 export const UNRESOLVED_STATUSES = [
   "unknown",
   "conflict",
-  "extracted",
 ] as const satisfies readonly ClaimStatus[];
 
+/**
+ * Who wrote a claim. `extraction` writes one thing only: the document side of a conflict, when a
+ * passage from an uploaded document disagrees with what the person said.
+ */
 export const CREATOR_TYPES = ["agent", "user", "extraction"] as const;
 export type CreatorType = (typeof CREATOR_TYPES)[number];
 
@@ -54,7 +50,11 @@ export const AUTHORITY_TIERS = [
 
 export type AuthorityTier = (typeof AUTHORITY_TIERS)[number];
 
-/** Where a claim came from. `policy_document` is a claim read from an uploaded document. */
+/**
+ * Where a claim came from. `policy_document` is the document side of a conflict: a passage from an
+ * uploaded document that disagrees with the person. Nothing else from a document is a claim until
+ * the person says it applies, and then it is their own statement.
+ */
 export const SOURCE_TYPES = ["employee_statement", "agent_suggestion", "policy_document"] as const;
 export type SourceType = (typeof SOURCE_TYPES)[number];
 
@@ -74,6 +74,10 @@ export const CLAIM_WRITE_ERROR_CODES = [
   "already_recorded",
   "review_action_not_allowed",
   "confirmation_required",
+  "passage_not_found",
+  "passage_not_offered",
+  "passage_field_mismatch",
+  "statement_not_supported",
 ] as const;
 
 export type ClaimWriteErrorCode = (typeof CLAIM_WRITE_ERROR_CODES)[number];
@@ -98,7 +102,7 @@ export type ClaimValue = z.infer<typeof claimValueSchema>;
 
 /**
  * A citation into an uploaded document. The file itself is never kept, so the citation is the whole
- * of the evidence: the API proved the quote exists in the cited section before a claim was written.
+ * of the evidence: the API proved the quote exists in the cited section before the passage was kept.
  */
 export const documentCitationSchema = z.object({
   /** The uploaded file's name, sanitized. Shown to a person and never sent to a model. */
@@ -145,6 +149,12 @@ export const claimSchema = z
      * claim keeps its own value, source and authority, so both sides can be shown as they were.
      */
     conflictsWithClaimId: identifierSchema.nullable(),
+    /**
+     * The reference passage behind this claim, or null. On the person's own statement it records
+     * that they agreed with what an uploaded document says, so the document is shown as evidence;
+     * on the document side of a conflict it is the passage that disagrees.
+     */
+    basedOnPassageId: identifierSchema.nullable(),
     createdAt: timestampSchema,
     updatedAt: timestampSchema,
   })
@@ -186,16 +196,26 @@ export const claimSchema = z
       ]);
     }
 
-    if (claim.status === "extracted") {
+    if (isDocumentSource) {
       if (
-        !isDocumentSource ||
+        claim.status !== "conflict" ||
         claim.authority !== "official_policy" ||
-        claim.createdByType !== "extraction"
+        claim.createdByType !== "extraction" ||
+        claim.basedOnPassageId === null
       ) {
         addIssue(
-          "An extracted claim comes from a document, by extraction, with policy authority.",
-          ["status"],
+          "A claim from a document is only ever the document side of a conflict, raised from a passage.",
+          ["source"],
         );
+      }
+    } else if (claim.basedOnPassageId !== null) {
+      if (
+        claim.source.type !== "employee_statement" ||
+        !(["observed", "confirmed", "conflict"] as ClaimStatus[]).includes(claim.status)
+      ) {
+        addIssue("Only the person's own statement can rest on a passage they agreed with.", [
+          "basedOnPassageId",
+        ]);
       }
     }
 

@@ -9,6 +9,8 @@ import {
   CLAIM_STATUSES,
   type ClaimChange,
   CORRECT_CLAIM_TOOL_NAME,
+  DECLINE_DOCUMENT_PASSAGE_TOOL_NAME,
+  declineDocumentPassage,
   MARK_CLAIM_UNKNOWN_TOOL_NAME,
   RECORD_CLAIM_TOOL_NAME,
   RESOLVE_CONFLICT_TOOL_NAME,
@@ -46,6 +48,22 @@ const effectiveDateSchema = z
   .nullable()
   .describe("The date the fact takes effect, as YYYY-MM-DD, or null.");
 
+const documentPassageSchema = z
+  .object({
+    passageId: z
+      .string()
+      .describe("The passageId from documentPassages or pendingDocumentPassages."),
+    userAgrees: z
+      .boolean()
+      .describe(
+        "true: the user said the passage applies, and this claim states it for this SOP. false: the user answered differently, and this claim is their own answer instead.",
+      ),
+  })
+  .nullable()
+  .describe(
+    "Only when this claim is the user's answer to a document passage you put to them. Otherwise null.",
+  );
+
 const recordClaimToolSchema = z.object({
   field: fieldSchema,
   status: z
@@ -69,6 +87,7 @@ const recordClaimToolSchema = z.object({
     .describe(
       "Procedure only: the id of the step this new step comes before, or null to add it at the end.",
     ),
+  documentPassage: documentPassageSchema,
 });
 
 const correctClaimToolSchema = z.object({
@@ -84,6 +103,7 @@ const correctClaimToolSchema = z.object({
     .string()
     .nullable()
     .describe("A short remark. Repeat the current note unless the user changed it, or null."),
+  documentPassage: documentPassageSchema,
 });
 
 const markClaimUnknownToolSchema = z.object({
@@ -115,12 +135,27 @@ const withdrawClaimToolSchema = z.object({
   note: z.string().describe("Why the user says it should be removed."),
 });
 
+const declineDocumentPassageToolSchema = z.object({
+  passageId: z
+    .string()
+    .describe(
+      "The passageId, from documentPassages or pendingDocumentPassages, of the passage to turn down.",
+    ),
+});
+
 /*
  * What the handlers accept. Status is deliberately wider than the model's schema: if a model ever
  * asks for `confirmed` or `unknown`, the request must reach `applyClaim` and be refused there with
  * a message it can read, rather than being dropped as malformed.
  */
-const recordClaimArgumentsSchema = recordClaimToolSchema.extend({ status: z.enum(CLAIM_STATUSES) });
+const recordClaimArgumentsSchema = recordClaimToolSchema.extend({
+  status: z.enum(CLAIM_STATUSES),
+  // Strict function calling always sends it; a call without it is simply not an answer to a passage.
+  documentPassage: documentPassageSchema.optional(),
+});
+const correctClaimArgumentsSchema = correctClaimToolSchema.extend({
+  documentPassage: documentPassageSchema.optional(),
+});
 
 export const AGENT_TOOLS: readonly ModelToolSpec[] = [
   {
@@ -150,6 +185,12 @@ export const AGENT_TOOLS: readonly ModelToolSpec[] = [
     name: RESOLVE_CONFLICT_TOOL_NAME,
     description: `Record the user's final answer to a conflict: two claims about the same thing that disagree, for example what the user said and what an uploaded document says. Call it only after the user has given their answer in this message. Both claims move to the history and the answer is recorded as one claim. Never choose a side yourself. Not available for a claim that is not in a conflict. At most ${MAX_CONFLICT_RESOLUTIONS_PER_TURN} per turn.`,
     parameters: resolveConflictToolSchema,
+  },
+  {
+    name: DECLINE_DOCUMENT_PASSAGE_TOOL_NAME,
+    description:
+      "Turn down a document passage from documentPassages or pendingDocumentPassages: the user said it does not apply to this SOP or they do not want it, or it is not a rule of the process at all. Nothing is added to the SOP, and the passage is not put to them again. If the user gave their own answer instead, record that with record_claim and documentPassage.userAgrees false rather than calling this.",
+    parameters: declineDocumentPassageToolSchema,
   },
 ];
 
@@ -249,11 +290,12 @@ function parseToolCall(
           effectiveDate: args.effectiveDate,
           sourceMessageId,
           insertBeforeClaimId: args.insertBeforeClaimId,
+          documentPassage: args.documentPassage ?? null,
         },
       };
     }
     case "correct_claim": {
-      const parsed = correctClaimToolSchema.safeParse(argumentsValue);
+      const parsed = correctClaimArgumentsSchema.safeParse(argumentsValue);
       if (!parsed.success) return null;
       const args = parsed.data;
       return {
@@ -268,6 +310,7 @@ function parseToolCall(
           note: args.note,
           effectiveDate: args.effectiveDate,
           sourceMessageId,
+          documentPassage: args.documentPassage ?? null,
         },
       };
     }
@@ -308,6 +351,9 @@ function parseToolCall(
         },
       };
     }
+    case "decline_document_passage":
+      // Not a claim write: executeToolCall handles it before parsing a claim command.
+      return null;
     case "withdraw_claim": {
       const parsed = withdrawClaimToolSchema.safeParse(argumentsValue);
       if (!parsed.success) return null;
@@ -388,6 +434,57 @@ function acceptedOutcome(
 }
 
 /**
+ * Declines a document passage. It writes no claim, so it goes through its own function rather than
+ * `applyClaim`; the recorded call names the passage where a claim tool names its claim.
+ */
+function executeDecline(
+  session: SopSession,
+  call: ModelToolCall,
+  argumentsValue: unknown,
+  context: WriteContext,
+): ToolCallOutcome {
+  const toolName = DECLINE_DOCUMENT_PASSAGE_TOOL_NAME;
+  const parsed = declineDocumentPassageToolSchema.safeParse(argumentsValue);
+  if (!parsed.success) {
+    return rejected(
+      session,
+      call,
+      toolName,
+      null,
+      null,
+      "invalid_arguments",
+      "The arguments are not valid.",
+    );
+  }
+  const result = declineDocumentPassage(
+    session,
+    { kind: "declineDocumentPassage", createdByType: "agent", passageId: parsed.data.passageId },
+    context,
+  );
+  if (!result.ok) {
+    return rejected(session, call, toolName, null, null, result.error.code, result.error.message);
+  }
+  return {
+    session: result.session,
+    applied: true,
+    change: null,
+    toolName,
+    rejectionCode: null,
+    record: {
+      ...recordedCallBase(call),
+      field: result.passage.field,
+      requestedStatus: null,
+      outcome: { ok: true, claimId: result.passage.passageId, change: "unchanged" },
+    },
+    modelResult: JSON.stringify({
+      ok: true,
+      passageId: result.passage.passageId,
+      state: result.passage.state,
+    }),
+  };
+}
+
+/**
  * Runs one tool call against the working session. A failure is returned to the model as a compact
  * tool result so it can recover, instead of aborting the turn.
  */
@@ -413,6 +510,9 @@ export function executeToolCall(input: ExecuteToolCallInput): ToolCallOutcome {
       "invalid_arguments",
       "The arguments are not JSON.",
     );
+  }
+  if (toolName === DECLINE_DOCUMENT_PASSAGE_TOOL_NAME) {
+    return executeDecline(session, call, argumentsValue, context);
   }
   const parsed = parseToolCall(session, toolName, argumentsValue, sourceMessageId);
   if (parsed === null) {

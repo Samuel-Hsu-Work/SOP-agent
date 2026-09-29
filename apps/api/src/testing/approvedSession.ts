@@ -1,14 +1,17 @@
 import {
+  addReferenceDocument,
   applyClaim,
   approveSession,
   type ClaimWriteCommand,
   checkFinalization,
+  markDocumentPassagesOffered,
   SOP_FIELD_NAMES,
   type SopFieldName,
   type SopSession,
   setAdvisoryAcknowledgement,
 } from "@sop-agent/sop-core";
 import {
+  buildReferenceUpload,
   createDeterministicContext,
   createSessionWithUserMessage,
 } from "@sop-agent/sop-core/testing";
@@ -24,8 +27,9 @@ export interface ApprovedSessionOptions {
 
 /**
  * A session that went through the real path: statements recorded, some confirmed, an unknown, a
- * conflict pair and an extracted claim in advisory fields, every advisory gap acknowledged, then
- * approved. Every claim is written through `applyClaim`; nothing is forged by hand.
+ * document passage the user agreed with, and a conflict between a document and the user in
+ * advisory fields, every advisory gap acknowledged, then approved. Every claim is written through
+ * the real write paths; nothing is forged by hand.
  */
 export function buildApprovedSession(options: ApprovedSessionOptions = {}): SopSession {
   const context = createDeterministicContext();
@@ -42,7 +46,7 @@ export function buildApprovedSession(options: ApprovedSessionOptions = {}): SopS
     current: SopSession,
     field: SopFieldName,
     statement: string,
-    extra: { note?: string; effectiveDate?: string } = {},
+    extra: { note?: string; effectiveDate?: string; passageId?: string } = {},
   ): SopSession =>
     apply(current, {
       kind: "record",
@@ -54,6 +58,8 @@ export function buildApprovedSession(options: ApprovedSessionOptions = {}): SopS
       effectiveDate: extra.effectiveDate ?? null,
       sourceMessageId: messageId,
       insertBeforeClaimId: null,
+      documentPassage:
+        extra.passageId === undefined ? null : { passageId: extra.passageId, userAgrees: true },
     });
 
   let session = emptySession;
@@ -79,8 +85,8 @@ export function buildApprovedSession(options: ApprovedSessionOptions = {}): SopS
     session = apply(session, { kind: "confirm", createdByType: "user", claimId: claim.claimId });
   }
 
-  // Advisory fields: an unknown, a conflict and an extracted claim (the last two exist only from
-  // slice 5, so they are built by hand), which leave those fields as gaps to acknowledge.
+  // Advisory fields: an unknown, a document passage the user agreed with, and a conflict between
+  // what the user said and what the document says, which leave gaps to acknowledge.
   session = apply(session, {
     kind: "markUnknown",
     createdByType: "agent",
@@ -89,35 +95,32 @@ export function buildApprovedSession(options: ApprovedSessionOptions = {}): SopS
     note: "Which system holds the refund receipts.",
     sourceMessageId: messageId,
   });
-  // A document says one thing about controls, and the user said another: a real conflict pair, and
-  // a rule from a document that nobody disputed, both written through the real commands.
-  session = apply(session, {
-    kind: "ingestExtracted",
-    createdByType: "extraction",
-    field: "decisionRules",
-    statement: "Approve automatically under 50.",
-    citation: {
-      documentName: "refund-policy.pdf",
-      location: "p.2",
-      quote: "Refunds under 50 are approved automatically.",
-    },
-    effectiveDate: null,
-    note: null,
-  });
-  session = apply(session, {
-    kind: "ingestExtracted",
-    createdByType: "extraction",
-    field: "controls",
-    statement: "Refunds over 500 need a second approver.",
-    citation: {
-      documentName: "refund-policy.pdf",
-      location: "p.3",
-      quote: "Refunds over 500 need a second approver.",
-    },
-    effectiveDate: null,
-    note: null,
-  });
   session = record(session, "controls", "Refunds over 800 need a second approver.");
+  const uploaded = addReferenceDocument(
+    session,
+    buildReferenceUpload("refund-policy.pdf", [
+      {
+        field: "decisionRules",
+        statement: "Refunds under 50 are approved automatically.",
+        location: "p.2",
+      },
+      {
+        field: "controls",
+        statement: "Refunds over 500 need a second approver.",
+        location: "p.3",
+      },
+    ]),
+    context,
+  );
+  if (!uploaded.ok) throw new Error(`setup failed: ${uploaded.error.code}`);
+  const agreed = uploaded.session.references.passages.find(
+    (passage) => passage.field === "decisionRules",
+  );
+  if (agreed === undefined) throw new Error("setup failed");
+  session = markDocumentPassagesOffered(uploaded.session, [agreed.passageId]);
+  session = record(session, "decisionRules", "Refunds under 50 are approved automatically.", {
+    passageId: agreed.passageId,
+  });
 
   for (const field of checkFinalization(session).advisoryGapFields) {
     const result = setAdvisoryAcknowledgement(session, { field, acknowledged: true }, context);

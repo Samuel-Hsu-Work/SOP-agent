@@ -210,17 +210,6 @@ describe("buildInterviewAgenda", () => {
     ]);
   });
 
-  it("does not ask about a field that only awaits the review of an extracted claim", () => {
-    const { session } = setup();
-    const extracted = buildClaim({
-      claimId: "c1",
-      field: "purpose",
-      status: "extracted",
-    });
-    const agenda = buildInterviewAgenda({ ...session, claims: [extracted] });
-    expect(agenda.doNotAsk).toEqual([{ field: "purpose", why: "awaiting_review" }]);
-  });
-
   it("asks blocking fields before advisory ones and is ready only at zero blocking gaps", () => {
     const { session, record, markUnknown } = setup();
     let current = session;

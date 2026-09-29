@@ -58,6 +58,11 @@ export interface ChatTurnLog {
   claimDepthFindingsRaised: number;
   claimDepthFindingsWaiting: number;
   claimDepthQuestionFocus: string | null;
+  /** Document passages: counts only, never a statement, a quote or a file name. */
+  documentPassagesOffered: number;
+  documentPassagesUsed: number;
+  documentPassagesDeclined: number;
+  referenceConflictsRaised: number;
   stateItemChars: number;
   /** The first field the interview agenda proposed at the start of the turn: one of 13 names. */
   agendaTopField: string | null;
@@ -97,24 +102,30 @@ export interface SopPdfLog {
 
 /**
  * The single log line written per document upload that reaches document handling. Counts, timings
- * and categories only: never the file name, a heading, a location, a quote, a claim, a model's
- * refusal text, a library's error message, or a session id (the route never receives a session).
+ * and categories only: never the file name, a heading, a location, a quote, a passage, a claim, a
+ * model's refusal text or a library's error message. The session id is logged only when it is
+ * shaped like one (see `sessionIdForLog`).
  */
-export interface DocumentExtractLog {
-  event: "document_extract";
-  outcome: "extracted" | "refused" | "failed";
+export interface DocumentReferencesLog {
+  event: "document_references";
+  outcome: "read" | "refused" | "failed";
   /** A fixed category. Null when the upload was not refused. */
   refusalReason: DocumentRefusalReason | null;
+  sessionId: string | null;
   fileKind: "pdf" | "docx" | "markdown" | "text" | "unknown";
   byteLength: number;
   pageCount: number | null;
   sectionCount: number | null;
   characterCount: number | null;
-  claimsProposed: number;
-  claimsVerified: number;
-  claimsRejected: number;
+  passagesProposed: number;
+  passagesRejected: number;
   rejectionReasons: Record<string, number>;
-  claimsTruncated: number;
+  /** Verified passages left out because the SOP already says them. */
+  passagesAlreadyKnown: number;
+  passagesTruncated: number;
+  passagesKept: number;
+  /** Kept passages that disagree with what the person said. */
+  potentialConflicts: number;
   servedByModel: string | null;
   failedAttempts: { model: string; kind: ModelFailureKind }[];
   inputTokens: number;
@@ -130,7 +141,10 @@ export type DocumentRefusalReason =
   | "model_unavailable"
   | "busy"
   | "invalid_upload"
-  | "upload_too_large";
+  | "upload_too_large"
+  | "invalid_session"
+  | "session_approved"
+  | "no_target";
 
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 

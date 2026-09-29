@@ -2,10 +2,12 @@
 
 import {
   type AdvisoryFieldName,
+  addReferenceDocument,
   applyClaim,
   approveSession,
-  type ClaimDraft,
-  MAX_EXTRACTED_CLAIMS_PER_DOCUMENT,
+  type DocumentReferencesResponse,
+  hasSopTarget,
+  MAX_PASSAGES_PER_UPLOAD,
   MAX_SESSION_TRANSPORT_BYTES,
   markSopDownloaded,
   reopenSession,
@@ -17,7 +19,7 @@ import {
 import { useCallback, useEffect, useRef, useState } from "react";
 import { runChatTurn } from "./chatTurn.ts";
 import { requestSopPdf } from "./downloadSopPdf.ts";
-import { checkFileBeforeUpload, requestDocumentExtraction } from "./extractDocument.ts";
+import { checkFileBeforeUpload, requestDocumentReferences } from "./extractDocument.ts";
 import { saveBlobAsFile } from "./saveBlobAsFile.ts";
 import { loadSession, saveSession, startFreshSession } from "./sessionStore.ts";
 
@@ -55,52 +57,42 @@ function plural(count: number, singular: string, pluralForm: string): string {
   return count === 1 ? singular : pluralForm;
 }
 
+const NO_TARGET_MESSAGE =
+  "First tell the assistant which process this SOP covers, then upload the document.";
+
 /**
- * Writes the drafts a document produced into a copy of the session, one at a time, through
- * `applyClaim`. All or nothing: if any draft is refused (the session is full) or the result could
- * no longer be sent to the API, the caller keeps the session it had.
+ * Keeps the passages a document gave as reference material on a copy of the session, all or
+ * nothing, and raises a conflict for any that disagrees with what the user said. Refused if the
+ * result could no longer be sent to the API; the caller then keeps the session it had.
  */
-function writeDrafts(
+function keepPassages(
   session: SopSession,
-  drafts: readonly ClaimDraft[],
+  response: DocumentReferencesResponse,
 ):
-  | { ok: true; session: SopSession; added: number; alreadyThere: number }
+  | { ok: true; session: SopSession; added: number; alreadyThere: number; conflictsRaised: number }
   | { ok: false; message: string } {
-  let working = session;
-  let added = 0;
-  let alreadyThere = 0;
-  for (const [index, draft] of drafts.entries()) {
-    const result = applyClaim(
-      working,
-      {
-        kind: "ingestExtracted",
-        createdByType: "extraction",
-        field: draft.field,
-        statement: draft.statement,
-        citation: draft.citation,
-        effectiveDate: draft.effectiveDate,
-        note: null,
-      },
-      systemWriteContext,
-    );
-    if (!result.ok) {
-      return {
-        ok: false,
-        message: `Only ${index} of ${drafts.length} rules fit in this SOP, so none were added. Remove something or start a new chat.`,
-      };
-    }
-    working = result.session;
-    if (result.change === "created") added += 1;
-    else alreadyThere += 1;
-  }
-  if (transportSize(working) > MAX_SESSION_TRANSPORT_BYTES) {
+  const result = addReferenceDocument(
+    session,
+    { document: response.document, passages: response.passages },
+    systemWriteContext,
+  );
+  if (!result.ok) {
     return {
       ok: false,
       message:
-        "Adding these rules would make the SOP too large to keep working on, so none were added.",
+        result.error.code === "no_target"
+          ? NO_TARGET_MESSAGE
+          : `${result.error.message} Nothing from this document was kept.`,
     };
   }
-  return { ok: true, session: working, added, alreadyThere };
+  if (transportSize(result.session) > MAX_SESSION_TRANSPORT_BYTES) {
+    return {
+      ok: false,
+      message:
+        "Keeping this document's passages would make the session too large to keep working on, so none were kept.",
+    };
+  }
+  return result;
 }
 
 /** A local change to the session: the new session, or a sentence saying why it was refused. */
@@ -348,10 +340,11 @@ export function useSopSession() {
   }, [applyLocalChange]);
 
   /**
-   * Reads a document and adds the rules in it to the SOP as claims to review. The API only reads
-   * the file and proves each quote; the claims are written here through `applyClaim`. Refused
-   * while a turn or another upload is in flight and after approval, because the rest of the page
-   * builds on the session as it is now.
+   * Reads a document for this SOP and keeps what it holds as reference material. The API reads the
+   * file for the session's purpose and scope and proves each quote; the passages are kept here, and
+   * nothing enters the SOP until the user answers the assistant about one. Refused before the user
+   * has said what the SOP covers, while a turn or another upload is in flight, and after approval,
+   * because the rest of the page builds on the session as it is now.
    */
   const uploadDocument = useCallback(
     async (file: File): Promise<void> => {
@@ -362,6 +355,10 @@ export function useSopSession() {
         isSendingRef.current ||
         activeUpload.current !== null
       ) {
+        return;
+      }
+      if (!hasSopTarget(current)) {
+        setUploadReport({ kind: "error", message: NO_TARGET_MESSAGE });
         return;
       }
       const refusal = checkFileBeforeUpload(file);
@@ -375,9 +372,10 @@ export function useSopSession() {
       setIsUploading(true);
       setUploadReport(null);
 
-      const result = await requestDocumentExtraction({
+      const result = await requestDocumentReferences({
         apiBaseUrl: API_BASE_URL,
         file,
+        session: current,
         signal: controller.signal,
       });
 
@@ -392,14 +390,17 @@ export function useSopSession() {
       }
       const { response } = result;
       const { fileName } = response.document;
-      if (response.claims.length === 0) {
+      if (response.passages.length === 0) {
         const dropped = response.rejected.count;
+        const known = response.alreadyKnownCount;
         setUploadReport({
           kind: "info",
           message:
-            dropped === 0
-              ? `No SOP rules were found in ${fileName}.`
-              : `No rules from ${fileName} could be used: ${dropped} could not be verified against the text.`,
+            known > 0
+              ? `${fileName} holds nothing this SOP does not already say.`
+              : dropped === 0
+                ? `Nothing in ${fileName} is needed for this SOP.`
+                : `Nothing from ${fileName} could be used: ${dropped} ${plural(dropped, "passage", "passages")} could not be verified against the text.`,
         });
         return;
       }
@@ -407,42 +408,42 @@ export function useSopSession() {
       // Nothing else can have changed the session while the upload was running.
       const latest = sessionRef.current;
       if (latest === null) return;
-      const written = writeDrafts(latest, response.claims);
-      if (!written.ok) {
-        setUploadReport({ kind: "error", message: written.message });
+      const kept = keepPassages(latest, response);
+      if (!kept.ok) {
+        setUploadReport({ kind: "error", message: kept.message });
         return;
       }
-      const conflictsBefore = latest.claims.filter((claim) => claim.status === "conflict").length;
-      const conflictsAfter = written.session.claims.filter(
-        (claim) => claim.status === "conflict",
-      ).length;
-      replaceSession(written.session);
-      setError(saveSession(written.session) ? null : STORAGE_FAILURE_MESSAGE);
+      replaceSession(kept.session);
+      setError(saveSession(kept.session) ? null : STORAGE_FAILURE_MESSAGE);
 
       const parts = [
-        `Read ${fileName}: ${written.added} ${plural(written.added, "rule", "rules")} to review.`,
+        `Read ${fileName} for this SOP: ${kept.added} ${plural(kept.added, "passage", "passages")} kept as reference. Nothing was added to the SOP; the assistant will ask you about ${plural(kept.added, "it", "them")}.`,
       ];
-      if (written.alreadyThere > 0)
-        parts.push(`${written.alreadyThere} already there or rejected earlier.`);
+      if (kept.alreadyThere > 0) {
+        parts.push(
+          `${kept.alreadyThere} ${plural(kept.alreadyThere, "was", "were")} already kept from this file.`,
+        );
+      }
+      if (response.alreadyKnownCount > 0) {
+        parts.push(
+          `${response.alreadyKnownCount} ${plural(response.alreadyKnownCount, "passage says", "passages say")} what the SOP already says.`,
+        );
+      }
       const repeated = response.rejected.reasons.duplicate ?? 0;
       const unverified = response.rejected.count - repeated;
       if (unverified > 0) {
         parts.push(
-          `${unverified} ${plural(unverified, "rule was", "rules were")} dropped because ${plural(unverified, "it", "they")} could not be verified against the text.`,
+          `${unverified} ${plural(unverified, "passage was", "passages were")} dropped because ${plural(unverified, "it", "they")} could not be verified against the text.`,
         );
-      }
-      if (repeated > 0) {
-        parts.push(`${repeated} repeated ${plural(repeated, "rule was", "rules were")} dropped.`);
       }
       if (response.truncatedCount > 0) {
         parts.push(
-          `${response.truncatedCount} more ${plural(response.truncatedCount, "rule was", "rules were")} left out because one document can add at most ${MAX_EXTRACTED_CLAIMS_PER_DOCUMENT}.`,
+          `${response.truncatedCount} more ${plural(response.truncatedCount, "was", "were")} left out because one document gives at most ${MAX_PASSAGES_PER_UPLOAD}.`,
         );
       }
-      const newConflicts = (conflictsAfter - conflictsBefore) / 2;
-      if (newConflicts > 0) {
+      if (kept.conflictsRaised > 0) {
         parts.push(
-          `${newConflicts} ${plural(newConflicts, "conflict", "conflicts")} found: tell the assistant the final answer in chat.`,
+          `${kept.conflictsRaised} ${plural(kept.conflictsRaised, "passage disagrees", "passages disagree")} with what you said: tell the assistant the final answer in chat.`,
         );
       }
       setUploadReport({ kind: "info", message: parts.join(" ") });

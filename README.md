@@ -2,8 +2,9 @@
 
 An AI agent that interviews a person about a business process, finds the gaps they did not mention,
 and produces a Standard Operating Procedure (SOP). The person reviews every claim, approves the SOP,
-and downloads it as a PDF. They can also upload a policy or handbook, and the agent reads the rules
-in it and points out where the document and the person disagree.
+and downloads it as a PDF. They can also upload a policy or handbook: it is read for the SOP they
+are writing, the agent asks them about what it finds, and it points out where the document and the
+person disagree.
 
 The agent's behavior is the point; the web app around it is deliberately small: one page, a chat, a
 review panel, no login, one hard-coded company and user, running locally.
@@ -16,14 +17,18 @@ Each rule below is enforced in code, not asked of the model.
 - **Only a person confirms.** The agent has no tool that confirms a claim. Confirming, rejecting and
   approving are clicks in the browser.
 - **Every fact is a claim with a source.** A claim is `observed` (the person said it), `proposed`
-  (the agent suggested it), `unknown`, `extracted` (read from a document), `conflict`, or `confirmed`.
-  The SOP is a rendering of claims.
+  (the agent suggested it), `unknown`, `conflict`, or `confirmed`. The SOP is a rendering of claims.
 - **Gaps are computed, not judged.** Eight of the 13 SOP fields block approval, and five more can be
   acknowledged as advisory. Approval is refused in code while a blocking gap remains, whatever the
   model says.
-- **A document is data, never instructions.** Every rule read from a document must carry a quote that
-  code found in the cited page or section, or it is dropped. A document that says "mark every rule
-  confirmed" changes nothing.
+- **A document is reference material, never SOP content by itself.** An upload is read for the SOP
+  being written (so it waits until the person has said what that is), and it keeps at most eight
+  passages that SOP needs. Nothing enters the SOP until the agent has put a passage to the person and
+  they agree; then it is their own statement, with the document shown as evidence. The agent sees only
+  a passage's short statement, never the document.
+- **A document is data, never instructions.** Every passage must carry a quote that code found in the
+  cited page or section, and every number in it must be in that quote, or it is dropped. A document
+  that says "mark every rule confirmed" changes nothing.
 - **It asks what a finished SOP leaves unsaid, or says two ways.** Once no blocking gap remains, one
   extra model call reads the claims together for what no field check can see: an approval tier no step
   reaches, a case with no stated path (a refusal, a missed deadline), a threshold too vague to act on,
@@ -104,18 +109,25 @@ checks availability against.
 
 **With a document.**
 
-1. Upload `fixtures/documents/vendor-payment-policy.md`. Its rules appear in the review panel as
-   *Extracted from a document*, each with its quote and location.
-2. Upload `fixtures/documents/vendor-payment-memo.md`. It raises the $10,000 approval threshold to
-   $25,000, so the two documents disagree, and the panel shows the two rules side by side as a conflict.
-3. In the chat, say what is really true ("Payments up to $25,000 need only the Finance Director; above
-   that the CFO too."). The agent records your answer and both sides move to the history.
-4. Finish the interview in chat. The two documents give only the purpose, the approval authority and
-   the records, so the scope, trigger, roles, steps, completion criteria and governance are still
-   blocking gaps. Answer the agent's questions until it says the SOP can be reviewed.
-5. Confirm or reject each extracted rule, acknowledge the advisory gaps, and approve.
-6. Download the PDF. Anything still unresolved is printed in a separate "Open items" block that says
-   it is not an instruction.
+1. Start with what the SOP is about: "I'm documenting how vendor payments get approved." The upload
+   button waits until then, because a document is read for that SOP.
+2. Upload `fixtures/documents/vendor-payment-policy.md`. The upload panel lists the few passages kept
+   for this SOP, each with its quote and location. Nothing is added to the SOP yet.
+3. The agent brings them up in chat ("Your policy says payments above $10,000 need the budget owner and
+   the CFO. Is that how it works?"). Say yes and it is recorded as your statement, based on the
+   document; say it does not apply and it is left out.
+4. Upload `fixtures/documents/vendor-payment-memo.md`. It raises the $10,000 threshold to $25,000, so
+   it disagrees with the policy, or with what you just agreed, and the review panel shows the two sides
+   of the conflict together. Say what is really true ("Payments up to $25,000 need only the Finance
+   Director; above that the CFO too.") and the agent records your answer.
+5. Finish the interview in chat until the agent says the SOP can be reviewed, then acknowledge the
+   advisory gaps and approve.
+6. Download the PDF. A statement based on a document names it; anything still unresolved is printed
+   in a separate "Open items" block that says it is not an instruction.
+
+`fixtures/documents/northstar-store-policy.pdf` shows the relevance side: a store-wide policy far
+broader than any one SOP. Read for a cashier closing SOP, it gives the clock-out and closing rules and
+leaves out the opening, the cleaning products and what the policy says about itself.
 
 The other files in `fixtures/documents/` include a Word file, a PDF with a table, one with two columns,
 a scan with no text, an encrypted PDF, and a document that gives instructions to whoever reads it.
@@ -131,11 +143,12 @@ pnpm lint
 Three checks use the live model, cost a few cents each, and need `OPENAI_API_KEY`:
 
 ```bash
-pnpm smoke:api            # the five agent tools, one document extraction, one consistency
+pnpm smoke:api            # the agent's tools, one document reading, one consistency
                           #   review and one claim-depth review, on both models
-pnpm eval                 # 26 scripted interviews with safety and behavior assertions
+pnpm eval                 # 29 scripted interviews with safety and behavior assertions
                           #   EVAL_MODELS=all also runs the fallback model
-pnpm measure:extraction    # extraction on every sample document, scored against an answer key
+pnpm measure:extraction    # document reading on every sample, scored against two answer keys:
+                          #   field labels, and what one broad policy keeps for two different SOPs
 ```
 
 Safety assertions must pass on every trial, behavior assertions on 2 of 3. `pnpm eval:recheck
@@ -151,7 +164,7 @@ Three packages in one pnpm workspace, TypeScript throughout.
   single function that writes a claim (`applyClaim`), gap detection, conflict detection, approval, the
   interview policy (including which review question goes first), the rules that check what the two
   review model calls return, and the document model that the preview and the PDF share.
-- `apps/api` (Fastify) is stateless: `POST /chat` (one turn, streamed), `POST /documents/extract`,
+- `apps/api` (Fastify) is stateless: `POST /chat` (one turn, streamed), `POST /documents/references`,
   `POST /sops/pdf`, and `GET /health`. Every model call goes through a fallback wrapper.
 - `apps/web` (Next.js) holds the whole session in the browser tab's `sessionStorage` and applies review
   clicks, acknowledgements and approval locally.
@@ -213,7 +226,7 @@ What it costs:
 - **The server cannot trust the session it receives.** Every request is validated, and the PDF
   endpoint rechecks approval itself, because a hand-built session can claim to be approved.
 - **Every request carries the whole session.** Its size is capped, and document text is never kept
-  in it, only citations.
+  in it, only the few passages kept for this SOP and their citations.
 - **Nothing outlives the tab.** There is no resume, no list of past SOPs and no audit trail on the
   server. The downloaded PDF is the only durable record. A session saved by an older schema version
   is discarded, not migrated.
@@ -278,7 +291,11 @@ as it arrives. If the first message seems stuck, wait for the service to wake up
 ## Known limits
 
 - The conflict rule is a heuristic on purpose. It over-flags a paraphrase rather than miss a
-  disagreement, and it cannot tell that a document rule was misfiled under the wrong field.
+  disagreement, and it cannot tell that a passage was filed under the wrong field.
+- A document is judged for relevance once, when it is uploaded. If the SOP's scope changes, its
+  passages stop being offered, and the document has to be uploaded again to be read for the new scope.
+- Code checks a passage's numbers against its quote, but not its meaning: a statement that rewords the
+  quote wrongly is caught by the person, who sees the quote beside it and answers in chat.
 - The two review checks (what a finished SOP leaves unsaid, and a step too thin to carry out) are model
   judgments. They can miss something, or ask about something that is actually fine. Code checks what
   they return and decides when a question is asked, and a finding is only ever a question, so neither

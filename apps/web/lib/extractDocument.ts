@@ -1,18 +1,24 @@
 import {
   DOCUMENT_EXTENSIONS,
-  type DocumentExtractResponse,
-  documentExtractResponseSchema,
+  DOCUMENT_REFERENCES_PATH,
+  DOCUMENT_UPLOAD_FILE_FIELD,
+  DOCUMENT_UPLOAD_SESSION_FIELD,
+  type DocumentReferencesResponse,
+  documentReferencesResponseSchema,
   httpErrorSchema,
   MAX_UPLOAD_BYTES,
+  type SopSession,
 } from "@sop-agent/sop-core";
 
-export type ExtractDocumentResult =
-  | { kind: "received"; response: DocumentExtractResponse }
+export type ReadDocumentResult =
+  | { kind: "received"; response: DocumentReferencesResponse }
   | { kind: "failed"; message: string };
 
-export interface RequestDocumentExtractionInput {
+export interface RequestDocumentReferencesInput {
   apiBaseUrl: string;
   file: File;
+  /** The session the document is read for: it says what the SOP covers and what it already says. */
+  session: SopSession;
   signal?: AbortSignal;
   fetchImplementation?: typeof fetch;
 }
@@ -53,20 +59,22 @@ async function readErrorMessage(response: Response): Promise<string> {
 }
 
 /**
- * Sends one document for reading and returns the claim drafts. It only asks: the session is never
- * touched here, and what comes back is validated before anyone uses it. Turning a draft into a
- * claim is `applyClaim`'s job.
+ * Sends one document, with the session it is read for, and returns the passages that SOP needs.
+ * It only asks: the session is never changed here, and what comes back is validated before anyone
+ * uses it. Keeping the passages as reference material is `addReferenceDocument`'s job.
  */
-export async function requestDocumentExtraction(
-  input: RequestDocumentExtractionInput,
-): Promise<ExtractDocumentResult> {
+export async function requestDocumentReferences(
+  input: RequestDocumentReferencesInput,
+): Promise<ReadDocumentResult> {
   const fetchImplementation = input.fetchImplementation ?? fetch;
   const form = new FormData();
-  form.append("file", input.file, input.file.name);
+  // The session goes first, so the API can refuse a request it cannot read for before the file.
+  form.append(DOCUMENT_UPLOAD_SESSION_FIELD, JSON.stringify(input.session));
+  form.append(DOCUMENT_UPLOAD_FILE_FIELD, input.file, input.file.name);
 
   let response: Response;
   try {
-    response = await fetchImplementation(`${input.apiBaseUrl}/documents/extract`, {
+    response = await fetchImplementation(`${input.apiBaseUrl}${DOCUMENT_REFERENCES_PATH}`, {
       method: "POST",
       body: form,
       ...(input.signal === undefined ? {} : { signal: input.signal }),
@@ -77,7 +85,7 @@ export async function requestDocumentExtraction(
 
   if (!response.ok) return { kind: "failed", message: await readErrorMessage(response) };
   try {
-    const parsed = documentExtractResponseSchema.safeParse(await response.json());
+    const parsed = documentReferencesResponseSchema.safeParse(await response.json());
     return parsed.success
       ? { kind: "received", response: parsed.data }
       : { kind: "failed", message: UNEXPECTED_MESSAGE };

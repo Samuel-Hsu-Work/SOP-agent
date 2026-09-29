@@ -62,18 +62,15 @@ describe("computeGaps", () => {
     expect(readiness.gap).toBeNull();
   });
 
-  it.each(["unknown", "conflict", "extracted"] as const)(
-    "creates a gap for a %s claim",
-    (status) => {
-      const readiness = readinessOf(
-        sessionWithClaims(buildClaim({ claimId: "c1", field: "roles", status })),
-        "roles",
-      );
-      expect(readiness.state).toBe("unresolved");
-      expect(readiness.gap).toEqual({ severity: "blocking", reason: "unresolved" });
-      expect(readiness.unresolvedClaimIds).toEqual(["c1"]);
-    },
-  );
+  it.each(["unknown", "conflict"] as const)("creates a gap for a %s claim", (status) => {
+    const readiness = readinessOf(
+      sessionWithClaims(buildClaim({ claimId: "c1", field: "roles", status })),
+      "roles",
+    );
+    expect(readiness.state).toBe("unresolved");
+    expect(readiness.gap).toEqual({ severity: "blocking", reason: "unresolved" });
+    expect(readiness.unresolvedClaimIds).toEqual(["c1"]);
+  });
 
   it("takes severity from the field's class, not from the claim's status", () => {
     const session = sessionWithClaims(
@@ -120,18 +117,16 @@ describe("computeGaps", () => {
   });
 
   describe("askable", () => {
-    it("is true for an empty field and for a conflict, false for an unknown or an extracted claim", () => {
+    it("is true for an empty field and for a conflict, false for an unknown", () => {
       const session = sessionWithClaims(
         buildClaim({ claimId: "c1", field: "authorization", status: "unknown" }),
         buildClaim({ claimId: "c2", field: "roles", status: "conflict" }),
-        buildClaim({ claimId: "c3", field: "trigger", status: "extracted" }),
         buildClaim({ claimId: "c4", field: "governance", status: "unknown" }),
         buildClaim({ claimId: "c5", field: "governance", status: "conflict" }),
       );
       expect(readinessOf(session, "purpose").askable).toBe(true);
       expect(readinessOf(session, "authorization").askable).toBe(false);
       expect(readinessOf(session, "roles").askable).toBe(true);
-      expect(readinessOf(session, "trigger").askable).toBe(false);
       expect(readinessOf(session, "governance").askable).toBe(true);
     });
 

@@ -8,16 +8,20 @@ import {
   consistencyBasisOf,
   currentClaimDepthReview,
   currentConsistencyReview,
+  type DocumentPassageView,
   keepClaimDepthReviewForCurrentClaims,
   keepConsistencyReviewForCurrentClaims,
   MAX_ASSISTANT_MESSAGE_LENGTH,
   MAX_TOOL_CALLS_PER_MESSAGE,
   markClaimDepthQuestionOffered,
   markConsistencyQuestionOffered,
+  markDocumentPassagesOffered,
   needsClaimDepthReview,
   needsConsistencyReview,
+  type PassageState,
   type RecordedToolCall,
   type SopSession,
+  selectDocumentPassages,
   selectReviewQuestions,
   sopSessionSchema,
   type ToolOutcomeErrorCode,
@@ -28,10 +32,10 @@ import { ModelOutputError } from "../model/modelFallback.ts";
 import { runClaimDepthReview } from "./claimDepthReview.ts";
 import { runConsistencyReview } from "./consistencyReview.ts";
 import {
-  buildStateItem,
   INSTRUCTIONS,
   MAX_STATE_ITEM_LENGTH,
   measureStateItem,
+  renderStateItem,
   STATE_ITEM_WRITE_MARGIN,
 } from "./prompt.ts";
 import { AGENT_TOOLS, executeToolCall, type ToolCallOutcome } from "./tools.ts";
@@ -78,6 +82,14 @@ export interface TurnStats {
   claimDepthFindingsWaiting: number;
   /** The focus of the question handed to the agent for its reply, or null. Never its text. */
   claimDepthQuestionFocus: ClaimDepthFocus | null;
+  /** Document passages handed to the agent for its reply. Counts only, never their text. */
+  documentPassagesOffered: number;
+  /** Passages the user agreed with this turn, so a claim now rests on them. */
+  documentPassagesUsed: number;
+  /** Passages the user turned down or answered differently this turn. */
+  documentPassagesDeclined: number;
+  /** Passages that became one side of a conflict this turn, because the user said otherwise. */
+  referenceConflictsRaised: number;
   /** The size of the state item on the last step. */
   stateItemChars: number;
   inputTokens: number;
@@ -112,6 +124,10 @@ export function createEmptyTurnStats(): TurnStats {
     claimDepthFindingsRaised: 0,
     claimDepthFindingsWaiting: 0,
     claimDepthQuestionFocus: null,
+    documentPassagesOffered: 0,
+    documentPassagesUsed: 0,
+    documentPassagesDeclined: 0,
+    referenceConflictsRaised: 0,
     stateItemChars: 0,
     inputTokens: 0,
     cachedInputTokens: 0,
@@ -153,8 +169,21 @@ function countChange(stats: TurnStats, outcome: ToolCallOutcome): void {
       else stats.claimsMarkedUnknown += 1;
       return;
     case null:
+      // A declined document passage changes no claim; the turn counts passages separately.
       return;
   }
+}
+
+/** How many passages are in `state` now and were not at the start of the turn. */
+function passagesNewlyIn(before: SopSession, after: SopSession, state: PassageState): number {
+  const wasInState = new Set(
+    before.references.passages
+      .filter((passage) => passage.state === state)
+      .map((passage) => passage.passageId),
+  );
+  return after.references.passages.filter(
+    (passage) => passage.state === state && !wasInState.has(passage.passageId),
+  ).length;
 }
 
 function buildConversation(session: SopSession): ModelConversationItem[] {
@@ -200,6 +229,7 @@ export async function runAgentTurn(input: RunAgentTurnInput): Promise<RunAgentTu
   let lastAttemptedConsistencyBasis: string | null = null;
   let offeredQuestion: ConsistencyQuestion | null = null;
   let offeredDepthQuestion: ClaimDepthQuestion | null = null;
+  let offeredPassages: DocumentPassageView[] = [];
 
   const forwardTextDelta = (delta: string) => {
     if (delta.length === 0) return;
@@ -292,8 +322,14 @@ export async function runAgentTurn(input: RunAgentTurnInput): Promise<RunAgentTu
     }
     ({ claimDepthQuestion: offeredDepthQuestion, consistencyQuestion: offeredQuestion } =
       selectReviewQuestions(working));
-
-    const stateItem = buildStateItem({ session: working, allowToolCalls });
+    const rendered = renderStateItem({ session: working, allowToolCalls });
+    const stateItem = rendered.text;
+    // Only what the state actually showed counts as put to the user: near the size limit it can
+    // hold one passage of the two selected.
+    const shownIds = new Set(rendered.shownDocumentPassageIds);
+    offeredPassages = selectDocumentPassages(working).filter((passage) =>
+      shownIds.has(passage.passageId),
+    );
     stats.stateItemChars = stateItem.length;
 
     const result = await client.runStep({
@@ -389,18 +425,30 @@ export async function runAgentTurn(input: RunAgentTurnInput): Promise<RunAgentTu
   }
 
   // The last step's state item carried the question, so it counts as asked once, whatever the reply
-  // says. Only one of the two is ever marked: when both are present the prompt tells the agent to
+  // says. Only one kind is ever marked: when both are present the prompt tells the agent to
   // ask the depth question first (a restatement_mismatch never shares the state with one, see
   // selectReviewQuestions), so a consistency question that lost that priority fight was never
   // actually put to the person this turn, and must not silently consume its one-time offer — it
   // stays available to be asked, and marked offered, on a later turn instead.
+  // Document passages rank between the two: never shown beside a depth question or a mismatch
+  // (selectDocumentPassages), and ahead of a consistency question about an omission, which is
+  // therefore left unmarked, to be asked on a later turn, whenever passages were shown.
   if (offeredDepthQuestion !== null) {
     working = markClaimDepthQuestionOffered(working, offeredDepthQuestion.findingId, context);
     stats.claimDepthQuestionFocus = offeredDepthQuestion.focus;
+  } else if (offeredPassages.length > 0) {
+    working = markDocumentPassagesOffered(
+      working,
+      offeredPassages.map((passage) => passage.passageId),
+    );
+    stats.documentPassagesOffered = offeredPassages.length;
   } else if (offeredQuestion !== null) {
     working = markConsistencyQuestionOffered(working, offeredQuestion.findingId, context);
     stats.consistencyQuestionCategory = offeredQuestion.category;
   }
+  stats.documentPassagesUsed = passagesNewlyIn(input.session, working, "used");
+  stats.documentPassagesDeclined = passagesNewlyIn(input.session, working, "declined");
+  stats.referenceConflictsRaised = passagesNewlyIn(input.session, working, "in_conflict");
   stats.claimDepthFindingsWaiting = currentClaimDepthReview(working)?.findings.length ?? 0;
   stats.consistencyFindingsWaiting =
     currentConsistencyReview(working)?.findings.filter((finding) => !finding.wasOffered).length ??

@@ -2,14 +2,23 @@ import { describe, expect, it } from "vitest";
 import { applyClaim, type ClaimWriteCommand, type RecordClaimCommand } from "./applyClaim.ts";
 import type { Claim } from "./claim.ts";
 import { computeGaps } from "./computeGaps.ts";
-import { MAX_MESSAGES, MAX_STATEMENT_LENGTH } from "./limits.ts";
+import {
+  MAX_MESSAGES,
+  MAX_PASSAGE_STATEMENT_LENGTH,
+  MAX_REFERENCE_PASSAGES,
+  MAX_STATEMENT_LENGTH,
+} from "./limits.ts";
+import type { ReferenceDocument, ReferencePassage } from "./referenceSchema.ts";
 import { createEmptySession, type SopSession, sopSessionSchema } from "./session.ts";
 import type { SopFieldName } from "./sopFields.ts";
 import {
   buildClaim,
+  buildDocumentSide,
+  buildPassage,
   createDeterministicContext,
   createSessionWithUserMessage,
   createUserMessage,
+  referencesWith,
 } from "./testing.ts";
 
 /** A session that exercises every nullable field, every history reason and both value kinds. */
@@ -152,12 +161,14 @@ describe("sopSessionSchema", () => {
     expect((parsed.claims as Record<string, unknown>[])[0]?.injected).toBeUndefined();
   });
 
-  it("rejects a stored version-1 to 4 session, and other wrong versions and malformed timestamps", () => {
+  it("rejects a stored version-1 to 6 session, and other wrong versions and malformed timestamps", () => {
     const session = createEmptySession(createDeterministicContext());
-    expect(sopSessionSchema.safeParse({ ...session, schemaVersion: 1 }).success).toBe(false);
-    expect(sopSessionSchema.safeParse({ ...session, schemaVersion: 2 }).success).toBe(false);
-    expect(sopSessionSchema.safeParse({ ...session, schemaVersion: 3 }).success).toBe(false);
-    expect(sopSessionSchema.safeParse({ ...session, schemaVersion: 4 }).success).toBe(false);
+    for (const schemaVersion of [1, 2, 3, 4, 5, 6]) {
+      expect(sopSessionSchema.safeParse({ ...session, schemaVersion }).success).toBe(false);
+    }
+    // A version-6 session has no reference material, so it is refused even with the number changed.
+    const { references: _references, ...versionSixShape } = session;
+    expect(sopSessionSchema.safeParse(versionSixShape).success).toBe(false);
     expect(sopSessionSchema.safeParse({ ...session, createdAt: "yesterday" }).success).toBe(false);
   });
 
@@ -425,36 +436,130 @@ describe("document sources and conflicts", () => {
     reference: {
       kind: "document" as const,
       citation: {
-        documentName: "policy.pdf",
+        documentName: "policy.md",
         location: "p.2",
         quote: "Refunds over $200 need approval.",
       },
     },
   };
-  const extracted = (overrides: Partial<Claim> = {}): Claim =>
-    buildClaim({ claimId: "e1", field: "authorization", status: "extracted", ...overrides });
-  // `buildClaim` cites "message-1", so the session holds that user message.
-  const withClaims = (claims: Claim[]): SopSession => ({
+  /** A document side on its own, paired with nothing: enough for the claim-level rules. */
+  const documentSide = (overrides: Partial<Claim> = {}): Claim =>
+    buildDocumentSide({ claimId: "e1", field: "authorization", ...overrides });
+  // `buildClaim` cites "message-1", so the session holds that user message; "p1" is the passage.
+  const withClaims = (
+    claims: Claim[],
+    passages: ReferencePassage[] = [buildPassage({ passageId: "p1" })],
+  ): SopSession => ({
     ...empty(),
     messages: [createUserMessage("message-1")],
     claims,
+    references: referencesWith(passages),
+  });
+  const pairWith = (overrides: Partial<Claim> = {}) => [
+    documentSide({ claimId: "a", conflictsWithClaimId: "b" }),
+    buildClaim({
+      claimId: "b",
+      field: "authorization",
+      status: "conflict",
+      conflictsWithClaimId: "a",
+      ...overrides,
+    }),
+  ];
+
+  it("accepts the document side of a conflict, which cites a document and no message", () => {
+    expect(sopSessionSchema.safeParse(withClaims(pairWith())).success).toBe(true);
   });
 
-  it("accepts an extracted claim that cites a document and no message", () => {
-    expect(sopSessionSchema.safeParse(withClaims([extracted()])).success).toBe(true);
+  it("allows a claim from a document only as the side of a conflict raised from a passage", () => {
+    const parse = (claim: Claim) =>
+      sopSessionSchema.safeParse(
+        withClaims([
+          claim,
+          buildClaim({
+            claimId: "b",
+            field: "authorization",
+            status: "conflict",
+            conflictsWithClaimId: "a",
+          }),
+        ]),
+      ).success;
+    const side = (overrides: Partial<Claim>) =>
+      documentSide({ claimId: "a", conflictsWithClaimId: "b", ...overrides });
+    expect(parse(side({}))).toBe(true);
+    expect(parse(side({ authority: "observed_practice" }))).toBe(false);
+    expect(parse(side({ createdByType: "agent" }))).toBe(false);
+    expect(parse(side({ basedOnPassageId: null }))).toBe(false);
+    expect(parse(documentSide({ status: "confirmed", conflictsWithClaimId: null }))).toBe(false);
   });
 
-  it("requires an extracted claim to come from a document, by extraction, with policy authority", () => {
+  it("lets only the person's own statement rest on a passage, and only a passage the session holds", () => {
     const parse = (claim: Claim) => sopSessionSchema.safeParse(withClaims([claim])).success;
+    expect(parse(buildClaim({ claimId: "o", field: "scope", basedOnPassageId: "p1" }))).toBe(true);
     expect(
       parse(
-        extracted({
-          source: { type: "employee_statement", reference: { kind: "message", messageId: "m" } },
+        buildClaim({ claimId: "c", field: "scope", status: "confirmed", basedOnPassageId: "p1" }),
+      ),
+    ).toBe(true);
+    expect(parse(buildClaim({ claimId: "o", field: "scope", basedOnPassageId: "missing" }))).toBe(
+      false,
+    );
+    expect(
+      parse(
+        buildClaim({
+          claimId: "s",
+          field: "scope",
+          status: "proposed",
+          authority: "proposed",
+          source: {
+            type: "agent_suggestion",
+            reference: { kind: "message", messageId: "message-1" },
+          },
+          basedOnPassageId: "p1",
         }),
       ),
     ).toBe(false);
-    expect(parse(extracted({ authority: "observed_practice" }))).toBe(false);
-    expect(parse(extracted({ createdByType: "agent" }))).toBe(false);
+  });
+
+  it("requires every passage to come from a listed document, under that document's name", () => {
+    const parse = (session: SopSession) => sopSessionSchema.safeParse(session).success;
+    const passage = buildPassage({ passageId: "p1" });
+    expect(parse(withClaims([], [passage]))).toBe(true);
+    const unlisted = withClaims([], [passage]);
+    expect(parse({ ...unlisted, references: { ...unlisted.references, documents: [] } })).toBe(
+      false,
+    );
+    const renamed = withClaims([], [passage]);
+    const [document] = renamed.references.documents;
+    expect(
+      parse({
+        ...renamed,
+        references: {
+          ...renamed.references,
+          documents: [{ ...(document as ReferenceDocument), documentName: "other.md" }],
+        },
+      }),
+    ).toBe(false);
+    expect(
+      parse(withClaims([], [passage, buildPassage({ passageId: "p1", statement: "Again." })])),
+    ).toBe(false);
+  });
+
+  it("counts reference material toward the session's text cap", () => {
+    const longStatement = "x".repeat(MAX_PASSAGE_STATEMENT_LENGTH);
+    const passages = Array.from({ length: MAX_REFERENCE_PASSAGES }, (_, index) =>
+      buildPassage({ passageId: `p${index}`, statement: longStatement }),
+    );
+    const claims = Array.from({ length: 30 }, (_, index) =>
+      buildClaim({
+        claimId: `c${index}`,
+        field: "scope",
+        value: { kind: "statement", text: "y".repeat(MAX_STATEMENT_LENGTH) },
+      }),
+    );
+    expect(sopSessionSchema.safeParse(withClaims(claims.slice(0, 20), passages)).success).toBe(
+      true,
+    );
+    expect(sopSessionSchema.safeParse(withClaims(claims, passages)).success).toBe(false);
   });
 
   it("ties a document source to a document reference, and every other source to a message", () => {
@@ -467,7 +572,7 @@ describe("document sources and conflicts", () => {
       reference: documentSource.reference,
     };
     const parse = (claim: Claim) => sopSessionSchema.safeParse(withClaims([claim])).success;
-    expect(parse(extracted({ source: messageSourceWithDocumentType }))).toBe(false);
+    expect(parse(documentSide({ source: messageSourceWithDocumentType }))).toBe(false);
     expect(
       parse(
         buildClaim({ claimId: "o", field: "scope", source: documentReferenceWithStatementType }),
@@ -476,7 +581,9 @@ describe("document sources and conflicts", () => {
   });
 
   it("rejects a citation with a short quote", () => {
-    const shortQuote = extracted({
+    const [side, partner] = pairWith() as [Claim, Claim];
+    const shortQuote: Claim = {
+      ...side,
       source: {
         ...documentSource,
         reference: {
@@ -484,21 +591,12 @@ describe("document sources and conflicts", () => {
           citation: { ...documentSource.reference.citation, quote: "short" },
         },
       },
-    });
-    expect(sopSessionSchema.safeParse(withClaims([shortQuote])).success).toBe(false);
+    };
+    expect(sopSessionSchema.safeParse(withClaims([shortQuote, partner])).success).toBe(false);
   });
 
   it("accepts a conflict only as a pair in one field that name each other", () => {
-    const pair = (overrides: Partial<Claim> = {}) => [
-      extracted({ claimId: "a", status: "conflict", conflictsWithClaimId: "b" }),
-      buildClaim({
-        claimId: "b",
-        field: "authorization",
-        status: "conflict",
-        conflictsWithClaimId: "a",
-        ...overrides,
-      }),
-    ];
+    const pair = pairWith;
     const parse = (claims: Claim[]) => sopSessionSchema.safeParse(withClaims(claims)).success;
 
     // The document side of a conflict keeps its source, authority and creator.

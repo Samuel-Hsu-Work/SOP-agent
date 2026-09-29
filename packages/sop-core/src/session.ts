@@ -20,6 +20,11 @@ import {
   MAX_TOTAL_CLAIM_TEXT,
   MAX_USER_MESSAGE_LENGTH,
 } from "./limits.ts";
+import {
+  EMPTY_REFERENCE_MATERIAL,
+  referenceMaterialSchema,
+  totalReferenceTextLength,
+} from "./referenceSchema.ts";
 import { ADVISORY_FIELD_NAMES, SOP_FIELD_NAMES } from "./sopFields.ts";
 import type { WriteContext } from "./writeContext.ts";
 
@@ -28,6 +33,7 @@ export const CORRECT_CLAIM_TOOL_NAME = "correct_claim";
 export const MARK_CLAIM_UNKNOWN_TOOL_NAME = "mark_claim_unknown";
 export const WITHDRAW_CLAIM_TOOL_NAME = "withdraw_claim";
 export const RESOLVE_CONFLICT_TOOL_NAME = "resolve_conflict";
+export const DECLINE_DOCUMENT_PASSAGE_TOOL_NAME = "decline_document_passage";
 
 export const AGENT_TOOL_NAMES = [
   RECORD_CLAIM_TOOL_NAME,
@@ -35,6 +41,7 @@ export const AGENT_TOOL_NAMES = [
   MARK_CLAIM_UNKNOWN_TOOL_NAME,
   WITHDRAW_CLAIM_TOOL_NAME,
   RESOLVE_CONFLICT_TOOL_NAME,
+  DECLINE_DOCUMENT_PASSAGE_TOOL_NAME,
 ] as const;
 
 export type AgentToolName = (typeof AGENT_TOOL_NAMES)[number];
@@ -65,6 +72,7 @@ export const recordedToolCallSchema = z.object({
   outcome: z.discriminatedUnion("ok", [
     z.object({
       ok: z.literal(true),
+      /** The claim written. For `decline_document_passage`, which writes none, the passage declined. */
       claimId: identifierSchema,
       change: z.enum(CLAIM_CHANGES),
     }),
@@ -176,8 +184,10 @@ export type SessionStatus = (typeof SESSION_STATUSES)[number];
  * nullable field defaulting to null: additive and backward-compatible on its own, the same way the
  * consistency review's own `offeredSequence` field was added without a version bump, so this did
  * not need one either.
+ * Version 7 made uploaded documents reference material: passages kept outside the SOP, a claim's
+ * link to the passage it rests on, and no more `extracted` claims.
  */
-export const SESSION_SCHEMA_VERSION = 6;
+export const SESSION_SCHEMA_VERSION = 7;
 
 /** A person's statement that they saw an advisory gap and accept it. It carries no free text. */
 export const advisoryAcknowledgementSchema = z.object({
@@ -238,6 +248,11 @@ export const sopSessionSchema = z
      * claims, and nothing in it gates an approval or reaches the PDF.
      */
     claimDepthReview: claimDepthReviewSchema.nullable().default(null),
+    /**
+     * What uploaded documents hold for this SOP: passages kept outside the SOP until the person
+     * agrees one applies. They fill no gap and are never printed.
+     */
+    references: referenceMaterialSchema,
   })
   .superRefine((session, context) => {
     const addIssue = (message: string, path: (string | number)[]) =>
@@ -327,8 +342,41 @@ export const sopSessionSchema = z
       addIssue("An advisory field can be acknowledged once.", ["advisoryAcknowledgements"]);
     }
 
-    if (totalClaimTextLength(session.claims) > MAX_TOTAL_CLAIM_TEXT) {
-      addIssue("The claims hold more text than a session may.", ["claims"]);
+    const { references } = session;
+    if (findDuplicate(references.documents.map((document) => document.documentId)) !== undefined) {
+      addIssue("Reference document ids must be unique.", ["references", "documents"]);
+    }
+    if (findDuplicate(references.passages.map((passage) => passage.passageId)) !== undefined) {
+      addIssue("Passage ids must be unique.", ["references", "passages"]);
+    }
+    const documentsById = new Map(
+      references.documents.map((document) => [document.documentId, document]),
+    );
+    references.passages.forEach((passage, index) => {
+      if (documentsById.get(passage.documentId)?.documentName !== passage.citation.documentName) {
+        addIssue("A passage must come from a listed document and cite it by name.", [
+          "references",
+          "passages",
+          index,
+        ]);
+      }
+    });
+    const passageIds = new Set(references.passages.map((passage) => passage.passageId));
+    session.claims.forEach((claim, index) => {
+      if (claim.basedOnPassageId !== null && !passageIds.has(claim.basedOnPassageId)) {
+        addIssue("A claim can only rest on a passage the session holds.", [
+          "claims",
+          index,
+          "basedOnPassageId",
+        ]);
+      }
+    });
+
+    if (
+      totalClaimTextLength(session.claims) + totalReferenceTextLength(references) >
+      MAX_TOTAL_CLAIM_TEXT
+    ) {
+      addIssue("The claims and reference material hold more text than a session may.", ["claims"]);
     }
   });
 
@@ -352,5 +400,6 @@ export function createEmptySession(context: WriteContext): SopSession {
     advisoryAcknowledgements: [],
     consistencyReview: null,
     claimDepthReview: null,
+    references: EMPTY_REFERENCE_MATERIAL,
   };
 }

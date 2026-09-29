@@ -513,7 +513,7 @@ describe("applyClaim: correcting", () => {
     ]);
   });
 
-  it("refuses an unknown target, and conflict or extracted claims", () => {
+  it("refuses an unknown target, and a conflict claim", () => {
     const { context, session, messageId, correct } = setup();
     expectFailure(applyClaim(session, correct("nope"), context), "target_claim_not_found");
 
@@ -521,13 +521,11 @@ describe("applyClaim: correcting", () => {
       type: "employee_statement" as const,
       reference: { kind: "message" as const, messageId },
     };
-    for (const status of ["conflict", "extracted"] as const) {
-      const claim = buildClaim({ claimId: "c1", field: "roles", status, source });
-      expectFailure(
-        applyClaim({ ...session, claims: [claim] }, correct("c1"), context),
-        "status_transition_not_allowed",
-      );
-    }
+    const claim = buildClaim({ claimId: "c1", field: "roles", status: "conflict", source });
+    expectFailure(
+      applyClaim({ ...session, claims: [claim] }, correct("c1"), context),
+      "status_transition_not_allowed",
+    );
   });
 
   it("refuses when the history is full", () => {

@@ -1,6 +1,8 @@
 import {
+  addReferenceDocument,
   applyClaim,
   createEmptySession,
+  markDocumentPassagesOffered,
   type SopSession,
   type UserMessage,
   type WriteContext,
@@ -23,42 +25,32 @@ export function buildSeedSession(steps: readonly SeedStep[], context: WriteConte
 
   let session: SopSession = { ...empty, messages: [earlierMessage] };
   for (const step of steps) {
+    if (step.kind === "reference") {
+      session = seedReference(session, step, context);
+      continue;
+    }
     const result = applyClaim(
       session,
-      step.kind === "extracted"
+      step.kind === "record" || step.kind === "confirmed"
         ? {
-            kind: "ingestExtracted",
-            createdByType: "extraction",
+            kind: "record",
+            createdByType: "agent",
             field: step.field,
+            status: step.kind === "record" ? (step.status ?? "observed") : "observed",
             statement: step.statement,
-            citation: {
-              documentName: step.documentName ?? "policy-document.md",
-              location: "§ Rules",
-              quote: step.quote ?? `The document says: ${step.statement}`,
-            },
-            effectiveDate: null,
             note: null,
+            effectiveDate: null,
+            sourceMessageId: earlierMessage.id,
+            insertBeforeClaimId: null,
           }
-        : step.kind === "record" || step.kind === "confirmed"
-          ? {
-              kind: "record",
-              createdByType: "agent",
-              field: step.field,
-              status: step.kind === "record" ? (step.status ?? "observed") : "observed",
-              statement: step.statement,
-              note: null,
-              effectiveDate: null,
-              sourceMessageId: earlierMessage.id,
-              insertBeforeClaimId: null,
-            }
-          : {
-              kind: "markUnknown",
-              createdByType: "agent",
-              field: step.field,
-              claimId: null,
-              note: step.note,
-              sourceMessageId: earlierMessage.id,
-            },
+        : {
+            kind: "markUnknown",
+            createdByType: "agent",
+            field: step.field,
+            claimId: null,
+            note: step.note,
+            sourceMessageId: earlierMessage.id,
+          },
       context,
     );
     if (!result.ok) throw new Error(`Could not seed the scenario: ${result.error.code}`);
@@ -76,4 +68,33 @@ export function buildSeedSession(steps: readonly SeedStep[], context: WriteConte
     }
   }
   return session;
+}
+
+/** Keeps one passage through the real upload path, and marks it offered when the step says so. */
+function seedReference(
+  session: SopSession,
+  step: Extract<SeedStep, { kind: "reference" }>,
+  context: WriteContext,
+): SopSession {
+  const documentName = step.documentName ?? "policy-document.md";
+  const result = addReferenceDocument(
+    session,
+    {
+      document: { fileName: documentName, fileKind: "markdown" },
+      passages: [
+        {
+          field: step.field,
+          statement: step.statement,
+          effectiveDate: null,
+          citation: { documentName, location: "§ Rules", quote: step.quote ?? step.statement },
+        },
+      ],
+    },
+    context,
+  );
+  if (!result.ok) throw new Error(`Could not seed the passage: ${result.error.code}`);
+  if (step.offered !== true) return result.session;
+  const passage = result.session.references.passages.at(-1);
+  if (passage === undefined) throw new Error("Could not seed the passage.");
+  return markDocumentPassagesOffered(result.session, [passage.passageId]);
 }

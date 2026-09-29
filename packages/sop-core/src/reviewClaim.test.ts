@@ -3,10 +3,17 @@ import { applyClaim, type ClaimWriteCommand } from "./applyClaim.ts";
 import type { Claim, ClaimStatus } from "./claim.ts";
 import { computeGaps } from "./computeGaps.ts";
 import { MAX_HISTORY_ENTRIES } from "./limits.ts";
-import { REJECTED_NOTE, type ReviewClaimCommand, reviewActionsFor } from "./reviewClaim.ts";
+import { type ReviewClaimCommand, reviewActionsFor } from "./reviewClaim.ts";
 import { type SopSession, sopSessionSchema } from "./session.ts";
 import type { SopFieldName } from "./sopFields.ts";
-import { buildClaim, createDeterministicContext, createSessionWithUserMessage } from "./testing.ts";
+import {
+  buildClaim,
+  buildDocumentSide,
+  buildPassage,
+  createDeterministicContext,
+  createSessionWithUserMessage,
+  referencesWith,
+} from "./testing.ts";
 
 function deepFreeze<T>(value: T): T {
   if (typeof value === "object" && value !== null && !Object.isFrozen(value)) {
@@ -113,14 +120,44 @@ describe("review: confirming", () => {
     if (result.ok) expect(sopSessionSchema.safeParse(result.session).success).toBe(true);
   });
 
-  it("confirms an extracted claim without weakening a real authority", () => {
+  it("confirms the user's statement that rests on a passage, and keeps the link", () => {
     const { context, withClaim, confirm } = setup();
-    const { session } = withClaim("extracted", { authority: "official_policy" });
-    const result = applyClaim(session, confirm("claim-1"), context);
+    const { session } = withClaim("observed", { basedOnPassageId: "p1" });
+    const withPassage = {
+      ...session,
+      references: referencesWith([buildPassage({ passageId: "p1", state: "used" })]),
+    };
+    const result = applyClaim(withPassage, confirm("claim-1"), context);
     expect(result.ok && result.claim).toMatchObject({
       status: "confirmed",
-      authority: "official_policy",
+      authority: "observed_practice",
+      basedOnPassageId: "p1",
     });
+    if (result.ok) expect(sopSessionSchema.safeParse(result.session).success).toBe(true);
+  });
+
+  it("refuses to confirm or reject the document side of a conflict", () => {
+    const { context, session, confirm, reject } = setup();
+    const side = buildDocumentSide({
+      claimId: "doc",
+      field: "roles",
+      conflictsWithClaimId: "mine",
+    });
+    const mine = buildClaim({
+      claimId: "mine",
+      field: "roles",
+      status: "conflict",
+      conflictsWithClaimId: "doc",
+    });
+    const withPair = {
+      ...session,
+      claims: [mine, side],
+      references: referencesWith([
+        buildPassage({ passageId: "p1", field: "roles", state: "in_conflict" }),
+      ]),
+    };
+    expectFailure(applyClaim(withPair, confirm("doc"), context), "review_action_not_allowed");
+    expectFailure(applyClaim(withPair, reject("doc"), context), "review_action_not_allowed");
   });
 
   it("is a no-op for a claim that is already confirmed: no history, same session", () => {
@@ -198,24 +235,25 @@ describe("review: rejecting", () => {
     }
   });
 
-  it("puts a confirmed extracted claim back to extracted, with its authority, when the confirmation is withdrawn", () => {
+  it("puts a confirmed claim that rests on a passage back to observed, link intact, when the confirmation is withdrawn", () => {
     const { context, withClaim, confirm, reject } = setup();
-    const { session } = withClaim("extracted", { authority: "official_policy", field: "controls" });
-    const confirmed = applyClaim(session, confirm("claim-1"), context);
+    const { session } = withClaim("observed", { basedOnPassageId: "p1", field: "controls" });
+    const withPassage = {
+      ...session,
+      references: referencesWith([
+        buildPassage({ passageId: "p1", field: "controls", state: "used" }),
+      ]),
+    };
+    const confirmed = applyClaim(withPassage, confirm("claim-1"), context);
     if (!confirmed.ok) throw new Error("setup failed");
 
     const withdrawn = applyClaim(confirmed.session, reject("claim-1"), context);
     expect(withdrawn.ok && withdrawn.claim).toMatchObject({
-      status: "extracted",
-      authority: "official_policy",
+      status: "observed",
+      authority: "observed_practice",
+      basedOnPassageId: "p1",
     });
-    // The field still awaits review, as it did before the confirmation.
-    if (!withdrawn.ok) throw new Error("expected success");
-    const controls = computeGaps(withdrawn.session).fields.find(
-      (entry) => entry.field === "controls",
-    );
-    expect(controls?.state).toBe("unresolved");
-    expect(withdrawn.session.claimHistory.map((entry) => entry.reason)).toEqual([
+    expect(withdrawn.ok && withdrawn.session.claimHistory.map((entry) => entry.reason)).toEqual([
       "confirmed",
       "rejected",
     ]);
@@ -229,93 +267,6 @@ describe("review: rejecting", () => {
     });
     const result = applyClaim(suggestion.session, reject("claim-1"), context);
     expect(result.ok && result.claim).toMatchObject({ status: "proposed", authority: "proposed" });
-  });
-
-  it("returns a rejected extracted claim to unknown, keeps a procedure step's slot, and drops the value", () => {
-    const { context, session, reject } = setup();
-    const step = buildClaim({
-      claimId: "step-1",
-      field: "procedure",
-      status: "extracted",
-      effectiveDate: "2025-03-01",
-    });
-    const withStep: SopSession = { ...session, claims: [step], procedureOrder: ["step-1"] };
-    const result = applyClaim(withStep, reject("step-1"), context);
-
-    expect(result.ok && result.claim).toMatchObject({
-      status: "unknown",
-      value: null,
-      authority: "unknown",
-      effectiveDate: null,
-      note: REJECTED_NOTE,
-    });
-    expect(result.ok && result.session.procedureOrder).toEqual(["step-1"]);
-    if (result.ok) expect(sopSessionSchema.safeParse(result.session).success).toBe(true);
-  });
-
-  it("removes a rejected extracted rule to the history when its field holds something else", () => {
-    const { context, session, reject, source } = setup();
-    const kept = buildClaim({
-      claimId: "kept",
-      field: "authorization",
-      status: "confirmed",
-      source: source("employee_statement"),
-      value: { kind: "statement", text: "The Finance Director approves up to $25,000." },
-    });
-    const rejected = buildClaim({
-      claimId: "rejected",
-      field: "authorization",
-      status: "extracted",
-      value: { kind: "statement", text: "This memo replaces the old threshold." },
-    });
-    const result = applyClaim(
-      { ...session, claims: [kept, rejected] },
-      reject("rejected"),
-      context,
-    );
-
-    expect(result.ok && result.change).toBe("withdrawn");
-    expect(result.ok && result.session.claims.map((claim) => claim.claimId)).toEqual(["kept"]);
-    // No unknown is left behind, and the removal is not silent.
-    expect(result.ok && result.session.claims.some((claim) => claim.status === "unknown")).toBe(
-      false,
-    );
-    expect(result.ok && result.session.claimHistory).toMatchObject([
-      { claimId: "rejected", reason: "rejected", changedBy: "user", sourceMessageId: null },
-    ]);
-    if (result.ok) expect(sopSessionSchema.safeParse(result.session).success).toBe(true);
-  });
-
-  it("removes a rejected extracted step from the procedure order when other steps exist", () => {
-    const { context, session, reject, source } = setup();
-    const first = buildClaim({
-      claimId: "step-1",
-      field: "procedure",
-      status: "confirmed",
-      source: source("employee_statement"),
-      value: { kind: "step", text: "Receive the request." },
-    });
-    const second = buildClaim({
-      claimId: "step-2",
-      field: "procedure",
-      status: "extracted",
-      value: { kind: "step", text: "A step nobody follows." },
-    });
-    const result = applyClaim(
-      { ...session, claims: [first, second], procedureOrder: ["step-1", "step-2"] },
-      reject("step-2"),
-      context,
-    );
-    expect(result.ok && result.session.procedureOrder).toEqual(["step-1"]);
-    if (result.ok) expect(sopSessionSchema.safeParse(result.session).success).toBe(true);
-  });
-
-  it("still returns the field to unknown when the rejected rule was its only claim", () => {
-    const { context, withClaim, reject } = setup();
-    const { session } = withClaim("extracted", { field: "evidence" });
-    const result = applyClaim(session, reject("claim-1"), context);
-    expect(result.ok && result.claim).toMatchObject({ status: "unknown", note: REJECTED_NOTE });
-    expect(result.ok && result.session.claims).toHaveLength(1);
   });
 
   it("does not offer a reject for the user's own statement", () => {
@@ -429,14 +380,7 @@ describe("review: every action", () => {
 describe("reviewActionsFor", () => {
   it("offers exactly the actions that the write path accepts", () => {
     const { context, withClaim, confirm, reject } = setup();
-    const statuses: ClaimStatus[] = [
-      "confirmed",
-      "observed",
-      "proposed",
-      "unknown",
-      "conflict",
-      "extracted",
-    ];
+    const statuses: ClaimStatus[] = ["confirmed", "observed", "proposed", "unknown", "conflict"];
     for (const status of statuses) {
       const { session, claim } = withClaim(status);
       const actions = reviewActionsFor(claim);

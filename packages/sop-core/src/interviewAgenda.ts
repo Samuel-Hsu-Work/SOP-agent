@@ -11,7 +11,11 @@ import {
   type ConsistencyQuestionClaim,
   nextConsistencyQuestion,
   pendingMismatchClaims,
+  statesOutOfTime,
 } from "./consistencyReview.ts";
+import { MAX_DOCUMENT_PASSAGES_SHOWN } from "./limits.ts";
+import { isPassageStale, type ReferencePassage } from "./referenceSchema.ts";
+import { isAlreadyStated, isPassageOpen } from "./references.ts";
 import type { SopSession } from "./session.ts";
 import { getFieldDefinition, type SopFieldName } from "./sopFields.ts";
 import { quantitiesIn } from "./text.ts";
@@ -62,7 +66,20 @@ export interface AgendaQuestion {
 
 export interface AgendaExclusion {
   field: SopFieldName;
-  why: "user_does_not_know" | "awaiting_review";
+  why: "user_does_not_know";
+}
+
+/**
+ * A passage from an uploaded document, as the agent puts it to the user. Only the statement: never
+ * the quote, the file name or the location, so document text never reaches the agent.
+ */
+export interface DocumentPassageView {
+  passageId: string;
+  field: SopFieldName;
+  /** `fills_gap`: the field has a gap this may answer. `adds_detail`: the field is stated, and this may add to it. */
+  relationship: "fills_gap" | "adds_detail";
+  statement: string;
+  effectiveDate: string | null;
 }
 
 export interface InterviewAgenda {
@@ -97,6 +114,16 @@ export interface InterviewAgenda {
    * newest not-yet-asked one). Null when there is nothing pending.
    */
   pendingClaimDepthTarget: PendingClaimDepthTarget | null;
+  /**
+   * Up to two passages from uploaded documents to put to the user now, both about one field, or
+   * empty. They are reference material, never facts: nothing is recorded until the user answers.
+   * Withheld while a conflict, a `restatement_mismatch` or a `claimDepthQuestion` is waiting.
+   */
+  documentPassages: DocumentPassageView[];
+  /** The most recently offered passages the user has not answered yet, so the answer can be linked. */
+  pendingDocumentPassages: DocumentPassageView[];
+  /** How much reference material there is, so the agent can mention it without inventing any. */
+  documents: { uploaded: number; passagesNotYetUsed: number };
   /** True when no blocking gap remains. Only then may the agent say the SOP is ready to review. */
   readyToReview: boolean;
   blockingGapsRemaining: number;
@@ -121,6 +148,74 @@ export function selectReviewQuestions(session: SopSession): {
       ? null
       : nextClaimDepthQuestion(session);
   return { consistencyQuestion, claimDepthQuestion };
+}
+
+function toPassageView(session: SopSession, passage: ReferencePassage): DocumentPassageView {
+  const readiness = computeGaps(session).fields.find((entry) => entry.field === passage.field);
+  return {
+    passageId: passage.passageId,
+    field: passage.field,
+    relationship: readiness?.gap === null ? "adds_detail" : "fills_gap",
+    statement: passage.statement,
+    effectiveDate: passage.effectiveDate,
+  };
+}
+
+/**
+ * The document passages to put to the user this turn: the first open one, in the order the fields
+ * need them (a blocking gap first, then an advisory gap, then a field already stated), and at most
+ * one more about the same field. None while something outranks them: an unanswered conflict, a
+ * `restatement_mismatch`, a claim-depth question about a step just stated, or a user out of time.
+ * The agenda and the turn's offered-passage bookkeeping both use this, so what the model is shown
+ * and what is marked offered cannot disagree.
+ */
+export function selectDocumentPassages(session: SopSession): DocumentPassageView[] {
+  if (session.status !== "draft") return [];
+  if (session.claims.some((claim) => claim.status === "conflict")) return [];
+  const { consistencyQuestion, claimDepthQuestion } = selectReviewQuestions(session);
+  if (claimDepthQuestion !== null || consistencyQuestion?.category === "restatement_mismatch") {
+    return [];
+  }
+  if (statesOutOfTime(lastUserMessageText(session))) return [];
+
+  const report = computeGaps(session);
+  const fieldRank = (field: SopFieldName) => {
+    const gap = report.fields.find((entry) => entry.field === field)?.gap ?? null;
+    if (gap === null) return 2;
+    return gap.severity === "blocking" ? 0 : 1;
+  };
+  const candidates = session.references.passages
+    .map((passage, index) => ({ passage, index }))
+    .filter(({ passage }) => isPassageOpen(session, passage) && !isAlreadyStated(session, passage))
+    .sort(
+      (first, second) =>
+        fieldRank(first.passage.field) - fieldRank(second.passage.field) ||
+        first.index - second.index,
+    )
+    .map(({ passage }) => passage);
+  const first = candidates[0];
+  if (first === undefined) return [];
+  const sameField = candidates.filter((passage) => passage.field === first.field);
+  return sameField
+    .slice(0, MAX_DOCUMENT_PASSAGES_SHOWN)
+    .map((passage) => toPassageView(session, passage));
+}
+
+/** Offered passages not yet answered, newest first, that still apply to the SOP's target. */
+export function pendingDocumentPassages(session: SopSession): DocumentPassageView[] {
+  return session.references.passages
+    .filter((passage) => passage.state === "offered" && !isPassageStale(session, passage))
+    .sort((first, second) => (second.offeredSequence ?? 0) - (first.offeredSequence ?? 0))
+    .slice(0, MAX_DOCUMENT_PASSAGES_SHOWN)
+    .map((passage) => toPassageView(session, passage));
+}
+
+function lastUserMessageText(session: SopSession): string {
+  for (let index = session.messages.length - 1; index >= 0; index -= 1) {
+    const message = session.messages[index];
+    if (message?.role === "user") return message.text;
+  }
+  return "";
 }
 
 /**
@@ -182,15 +277,7 @@ export function buildInterviewAgenda(session: SopSession): InterviewAgenda {
 
   const doNotAsk = report.gaps
     .filter((readiness) => !readiness.askable)
-    .map((readiness): AgendaExclusion => {
-      const isAwaitingReview = session.claims.some(
-        (claim) => claim.field === readiness.field && claim.status === "extracted",
-      );
-      return {
-        field: readiness.field,
-        why: isAwaitingReview ? "awaiting_review" : "user_does_not_know",
-      };
-    });
+    .map((readiness): AgendaExclusion => ({ field: readiness.field, why: "user_does_not_know" }));
 
   const { consistencyQuestion, claimDepthQuestion } = selectReviewQuestions(session);
   return {
@@ -200,6 +287,16 @@ export function buildInterviewAgenda(session: SopSession): InterviewAgenda {
     pendingMismatchClaims: pendingMismatchClaims(session),
     claimDepthQuestion,
     pendingClaimDepthTarget: pendingClaimDepthTarget(session),
+    documentPassages: selectDocumentPassages(session),
+    pendingDocumentPassages: pendingDocumentPassages(session),
+    documents: {
+      uploaded: session.references.documents.length,
+      passagesNotYetUsed: session.references.passages.filter(
+        (passage) =>
+          (passage.state === "open" || passage.state === "offered") &&
+          !isPassageStale(session, passage),
+      ).length,
+    },
     readyToReview: report.blockingGapCount === 0,
     blockingGapsRemaining: report.blockingGapCount,
     advisoryGapsRemaining: report.advisoryGapCount,

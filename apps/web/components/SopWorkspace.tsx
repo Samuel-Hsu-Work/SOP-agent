@@ -1,6 +1,8 @@
 "use client";
 
+import { hasSopTarget } from "@sop-agent/sop-core";
 import { useEffect, useRef, useState } from "react";
+import { buildReferenceView } from "../lib/referenceView.ts";
 import { wouldLoseWork } from "../lib/unsavedWork.ts";
 import { useLeavePageWarning } from "../lib/useLeavePageWarning.ts";
 import { useSopSession } from "../lib/useSopSession.ts";
@@ -124,7 +126,9 @@ export function SopWorkspace() {
                     <UploadPanel
                       isDisabled={isSending}
                       isUploading={isUploading}
+                      hasTarget={hasSopTarget(session)}
                       report={uploadReport}
+                      documents={buildReferenceView(session)}
                       onUpload={uploadDocument}
                     />
                   )}

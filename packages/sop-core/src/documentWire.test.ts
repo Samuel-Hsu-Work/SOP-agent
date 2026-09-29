@@ -1,8 +1,6 @@
 import { describe, expect, it } from "vitest";
-import {
-  documentExtractResponseSchema,
-  MAX_EXTRACTED_CLAIMS_PER_DOCUMENT,
-} from "./documentWire.ts";
+import { documentReferencesResponseSchema } from "./documentWire.ts";
+import { MAX_PASSAGE_STATEMENT_LENGTH, MAX_PASSAGES_PER_UPLOAD } from "./limits.ts";
 
 const draft = {
   field: "authorization",
@@ -16,33 +14,39 @@ const draft = {
 };
 const response = (overrides: object = {}) => ({
   document: { fileName: "policy.md", fileKind: "markdown", sectionCount: 2, characterCount: 373 },
-  claims: [draft],
+  passages: [draft],
   rejected: { count: 0, reasons: {} },
+  alreadyKnownCount: 0,
   truncatedCount: 0,
   ...overrides,
 });
 
-describe("documentExtractResponseSchema", () => {
-  it("accepts drafts, and an empty list for a document with no rules in it", () => {
-    expect(documentExtractResponseSchema.safeParse(response()).success).toBe(true);
-    expect(documentExtractResponseSchema.safeParse(response({ claims: [] })).success).toBe(true);
+describe("documentReferencesResponseSchema", () => {
+  it("accepts passages, and an empty list for a document with nothing this SOP needs", () => {
+    expect(documentReferencesResponseSchema.safeParse(response()).success).toBe(true);
+    expect(documentReferencesResponseSchema.safeParse(response({ passages: [] })).success).toBe(
+      true,
+    );
   });
 
-  it("rejects a draft with an unknown field, a short quote, or a bad date", () => {
-    const parse = (claim: object) =>
-      documentExtractResponseSchema.safeParse(response({ claims: [claim] })).success;
+  it("rejects a passage with an unknown field, a short quote, a long statement or a bad date", () => {
+    const parse = (passage: object) =>
+      documentReferencesResponseSchema.safeParse(response({ passages: [passage] })).success;
     expect(parse({ ...draft, field: "everything" })).toBe(false);
     expect(parse({ ...draft, citation: { ...draft.citation, quote: "short" } })).toBe(false);
+    expect(parse({ ...draft, statement: "x".repeat(MAX_PASSAGE_STATEMENT_LENGTH + 1) })).toBe(
+      false,
+    );
     expect(parse({ ...draft, effectiveDate: "last year" })).toBe(false);
   });
 
-  it("carries no status, authority, id or source for a draft to smuggle in", () => {
-    const parsed = documentExtractResponseSchema.parse(
+  it("carries no status, state, id or source for a passage to smuggle in", () => {
+    const parsed = documentReferencesResponseSchema.parse(
       response({
-        claims: [{ ...draft, status: "confirmed", authority: "official_policy", claimId: "x" }],
+        passages: [{ ...draft, status: "confirmed", state: "used", passageId: "x" }],
       }),
     );
-    expect(Object.keys(parsed.claims[0] ?? {}).sort()).toEqual([
+    expect(Object.keys(parsed.passages[0] ?? {}).sort()).toEqual([
       "citation",
       "effectiveDate",
       "field",
@@ -50,10 +54,10 @@ describe("documentExtractResponseSchema", () => {
     ]);
   });
 
-  it("caps the number of drafts", () => {
-    const tooMany = Array.from({ length: MAX_EXTRACTED_CLAIMS_PER_DOCUMENT + 1 }, () => draft);
-    expect(documentExtractResponseSchema.safeParse(response({ claims: tooMany })).success).toBe(
-      false,
-    );
+  it("caps the number of passages one upload returns", () => {
+    const tooMany = Array.from({ length: MAX_PASSAGES_PER_UPLOAD + 1 }, () => draft);
+    expect(
+      documentReferencesResponseSchema.safeParse(response({ passages: tooMany })).success,
+    ).toBe(false);
   });
 });
