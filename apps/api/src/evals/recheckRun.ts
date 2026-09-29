@@ -15,7 +15,7 @@ import {
   summarizeAssertions,
   type TrialResults,
 } from "./report.ts";
-import { SCENARIOS } from "./scenarios.ts";
+import { SCENARIOS } from "./scenarios/index.ts";
 
 const path = process.argv[2];
 if (path === undefined) {

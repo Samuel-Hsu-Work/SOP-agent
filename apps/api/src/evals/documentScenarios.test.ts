@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import { GLOBAL_ASSERTIONS } from "./assertions.ts";
 import { buildTranscript, type FixtureTurn, recordCommand } from "./evalFixtures.ts";
 import type { EvalScenario, Transcript } from "./evalTypes.ts";
-import { SCENARIOS } from "./scenarios.ts";
+import { SCENARIOS } from "./scenarios/index.ts";
 
 function scenarioById(id: string): EvalScenario {
   const scenario = SCENARIOS.find((candidate) => candidate.id === id);

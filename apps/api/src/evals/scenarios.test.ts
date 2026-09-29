@@ -3,7 +3,7 @@ import { describe, expect, it } from "vitest";
 import { GLOBAL_ASSERTIONS } from "./assertions.ts";
 import { buildTranscript, createFixtureContext, recordCommand } from "./evalFixtures.ts";
 import type { EvalScenario } from "./evalTypes.ts";
-import { MAX_JUDGED_EXPECTATIONS, SCENARIOS } from "./scenarios.ts";
+import { MAX_JUDGED_EXPECTATIONS, SCENARIOS } from "./scenarios/index.ts";
 import { buildSeedSession } from "./seedSession.ts";
 
 function scenarioById(id: string): EvalScenario {

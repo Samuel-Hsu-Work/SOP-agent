@@ -30,7 +30,7 @@ import {
   type TrialResults,
 } from "./report.ts";
 import { runScenario } from "./runScenario.ts";
-import { SCENARIOS } from "./scenarios.ts";
+import { SCENARIOS } from "./scenarios/index.ts";
 
 const REPETITIONS = Number(process.env.EVAL_REPETITIONS ?? 3);
 const configuredModels = readModelsFromEnvironment();
