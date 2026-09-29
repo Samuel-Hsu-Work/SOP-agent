@@ -6,21 +6,16 @@ import {
   checkSessionLimits,
   commit,
   failure,
-  hasUserMessage,
   isClaimWriteError,
   type SessionChanges,
-  userMessageText,
   validateText,
   withoutCopiedDocumentDate,
 } from "./claimWriteSupport.ts";
-import { keepsPassageMeaning } from "./detectConflicts.ts";
-import {
-  findPassage,
-  MAX_CLAIMS_PER_PASSAGE,
-  type ReferencePassage,
-  updatePassage,
-} from "./referenceSchema.ts";
+import { findPassage } from "./referenceQueries.ts";
+import { MAX_CLAIMS_PER_PASSAGE, type ReferencePassage, updatePassage } from "./referenceSchema.ts";
 import type { SopSession } from "./session.ts";
+import { hasUserMessage, userMessageText } from "./sessionQueries.ts";
+import { keepsPassageMeaning } from "./statementComparison.ts";
 import { areNumbersSupported } from "./text.ts";
 import type { WriteContext } from "./writeContext.ts";
 

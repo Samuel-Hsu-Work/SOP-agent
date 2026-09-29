@@ -5,14 +5,13 @@ import {
   identifierSchema,
   timestampSchema,
 } from "./claim.ts";
-import { DOCUMENT_FILE_KINDS } from "./documentWire.ts";
+import { DOCUMENT_FILE_KINDS } from "./documentFile.ts";
 import {
   MAX_DOCUMENT_NAME_LENGTH,
   MAX_PASSAGE_STATEMENT_LENGTH,
   MAX_REFERENCE_DOCUMENTS,
   MAX_REFERENCE_PASSAGES,
 } from "./limits.ts";
-import type { SopSession } from "./session.ts";
 import { SOP_FIELD_NAMES } from "./sopFields.ts";
 
 /**
@@ -101,22 +100,6 @@ export const EMPTY_REFERENCE_MATERIAL: ReferenceMaterial = {
   passages: [],
   offeredTotal: 0,
 };
-
-/**
- * A passage is stale once any purpose or scope claim it was judged against is gone or emptied: the
- * SOP's target has changed since, so the passage may no longer apply. A correction keeps the claim's
- * id, and a new scope claim adds to the target, so neither makes a passage stale.
- */
-export function isPassageStale(session: SopSession, passage: ReferencePassage): boolean {
-  const withValue = new Set(
-    session.claims.filter((claim) => claim.value !== null).map((claim) => claim.claimId),
-  );
-  return passage.targetClaimIds.some((claimId) => !withValue.has(claimId));
-}
-
-export function findPassage(session: SopSession, passageId: string): ReferencePassage | undefined {
-  return session.references.passages.find((passage) => passage.passageId === passageId);
-}
 
 export function updatePassage(
   references: ReferenceMaterial,

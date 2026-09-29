@@ -135,3 +135,16 @@ export function significantWordsOf(text: string): Set<string> {
   }
   return words;
 }
+
+/**
+ * A fixed-size hash of a string (FNV-1a, 32 bit), so a fingerprint stays short whatever the
+ * claims hold. The consistency and claim-depth reviews each fingerprint what they last read with it.
+ */
+export function hashText(text: string): string {
+  let hash = 0x811c9dc5;
+  for (let index = 0; index < text.length; index += 1) {
+    hash ^= text.charCodeAt(index);
+    hash = Math.imul(hash, 0x01000193) >>> 0;
+  }
+  return hash.toString(16).padStart(8, "0");
+}

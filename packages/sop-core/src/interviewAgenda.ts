@@ -11,12 +11,13 @@ import {
   type ConsistencyQuestionClaim,
   nextConsistencyQuestion,
   pendingMismatchClaims,
-  statesOutOfTime,
 } from "./consistencyReview.ts";
 import { MAX_DOCUMENT_PASSAGES_SHOWN } from "./limits.ts";
-import { isPassageStale, MAX_TIMES_NOT_ASKED, type ReferencePassage } from "./referenceSchema.ts";
+import { isPassageStale } from "./referenceQueries.ts";
+import { MAX_TIMES_NOT_ASKED, type ReferencePassage } from "./referenceSchema.ts";
 import { isAlreadyStated, isPassageOpen } from "./references.ts";
 import type { SopSession } from "./session.ts";
+import { lastUserMessageText, statesOutOfTime } from "./sessionQueries.ts";
 import { getFieldDefinition, type SopFieldName } from "./sopFields.ts";
 import { quantitiesIn } from "./text.ts";
 
@@ -217,14 +218,6 @@ export function pendingDocumentPassages(session: SopSession): DocumentPassageVie
     .sort((first, second) => (second.offeredSequence ?? 0) - (first.offeredSequence ?? 0))
     .slice(0, MAX_DOCUMENT_PASSAGES_SHOWN)
     .map((passage) => toPassageView(session, passage));
-}
-
-function lastUserMessageText(session: SopSession): string {
-  for (let index = session.messages.length - 1; index >= 0; index -= 1) {
-    const message = session.messages[index];
-    if (message?.role === "user") return message.text;
-  }
-  return "";
 }
 
 /**

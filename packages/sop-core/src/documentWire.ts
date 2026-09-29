@@ -1,5 +1,6 @@
 import { z } from "zod";
 import { calendarDateSchema, documentCitationSchema } from "./claim.ts";
+import { DOCUMENT_FILE_KINDS, type DocumentFileKind } from "./documentFile.ts";
 import { MAX_PASSAGE_STATEMENT_LENGTH, MAX_PASSAGES_PER_UPLOAD } from "./limits.ts";
 import { SOP_FIELD_NAMES } from "./sopFields.ts";
 
@@ -22,10 +23,6 @@ export const DOCUMENT_UPLOAD_FILE_FIELD = "file";
 
 /** The largest file the API accepts. The browser refuses a bigger one before sending it. */
 export const MAX_UPLOAD_BYTES = 2 * 1024 * 1024;
-
-/** What a document can be, by extension. The API also checks the bytes, never the extension alone. */
-export const DOCUMENT_FILE_KINDS = ["pdf", "docx", "markdown", "text"] as const;
-export type DocumentFileKind = (typeof DOCUMENT_FILE_KINDS)[number];
 
 export const DOCUMENT_EXTENSIONS: Readonly<Record<string, DocumentFileKind>> = {
   ".pdf": "pdf",

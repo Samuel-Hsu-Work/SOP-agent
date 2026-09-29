@@ -10,6 +10,7 @@ export type {
   ResolveConflictCommand,
   WithdrawClaimCommand,
 } from "./applyClaim.ts";
+
 export { applyClaim, STATUSES_WRITABLE_BY } from "./applyClaim.ts";
 export type {
   AcknowledgementErrorCode,
@@ -123,8 +124,6 @@ export {
   needsConsistencyReview,
   nextConsistencyQuestion,
   pendingMismatchClaims,
-  statedClaimsInReadingOrder,
-  statesOutOfTime,
 } from "./consistencyReview.ts";
 export type {
   ConsistencyAnalysisOutput,
@@ -144,21 +143,16 @@ export {
   MAX_RELATED_CLAIMS,
   MIN_CLAIMS_IN_A_MISMATCH,
 } from "./consistencyReviewSchema.ts";
-export {
-  CONFLICT_TOPIC_OVERLAP,
-  disagreesWithWhatWasSaid,
-  keepsPassageMeaning,
-  statesTheSameThing,
-} from "./detectConflicts.ts";
+export { disagreesWithWhatWasSaid } from "./detectConflicts.ts";
+export type { DocumentFileKind } from "./documentFile.ts";
+export { DOCUMENT_FILE_KINDS } from "./documentFile.ts";
 export type {
-  DocumentFileKind,
   DocumentReferencesResponse,
   PassageDraft,
   QuoteRejectionReason,
 } from "./documentWire.ts";
 export {
   DOCUMENT_EXTENSIONS,
-  DOCUMENT_FILE_KINDS,
   DOCUMENT_REFERENCES_PATH,
   DOCUMENT_UPLOAD_FILE_FIELD,
   DOCUMENT_UPLOAD_SESSION_FIELD,
@@ -193,6 +187,7 @@ export {
 export * from "./limits.ts";
 export type { SopPdfRequest } from "./pdfWire.ts";
 export { SOP_PDF_MEDIA_TYPE, sopPdfFileName, sopPdfRequestSchema } from "./pdfWire.ts";
+export { findPassage, isPassageStale } from "./referenceQueries.ts";
 export type {
   PassageState,
   ReferenceDocument,
@@ -201,8 +196,6 @@ export type {
 } from "./referenceSchema.ts";
 export {
   EMPTY_REFERENCE_MATERIAL,
-  findPassage,
-  isPassageStale,
   MAX_TIMES_NOT_ASKED,
   PASSAGE_STATES,
   referenceMaterialSchema,
@@ -224,10 +217,8 @@ export {
   isAlreadyStated,
   isPassageOpen,
   markDocumentPassagesOffered,
-  PASSAGE_WORDING_OVERLAP,
   settleShownDocumentPassages,
   sopTargetOf,
-  usesPassageWording,
 } from "./references.ts";
 export type { ReviewClaimCommand } from "./reviewClaim.ts";
 export { reviewActionsFor } from "./reviewClaim.ts";
@@ -263,6 +254,7 @@ export {
   TOOL_OUTCOME_ERROR_CODES,
   WITHDRAW_CLAIM_TOOL_NAME,
 } from "./session.ts";
+export { statedClaimsInReadingOrder, statesOutOfTime } from "./sessionQueries.ts";
 export type {
   GapLabel,
   SopDocument,
@@ -283,6 +275,13 @@ export {
   SOP_FIELD_NAMES,
   SOP_FIELDS,
 } from "./sopFields.ts";
+export {
+  CONFLICT_TOPIC_OVERLAP,
+  keepsPassageMeaning,
+  PASSAGE_WORDING_OVERLAP,
+  statesTheSameThing,
+  usesPassageWording,
+} from "./statementComparison.ts";
 export { areNumbersSupported } from "./text.ts";
 export type { WriteContext } from "./writeContext.ts";
 export { systemWriteContext } from "./writeContext.ts";

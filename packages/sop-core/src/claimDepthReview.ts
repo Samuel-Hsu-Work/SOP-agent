@@ -7,13 +7,13 @@ import {
   MAX_CLAIM_DEPTH_QUESTIONS_PER_SESSION,
 } from "./claimDepthReviewSchema.ts";
 import { computeGaps } from "./computeGaps.ts";
+import type { SopSession } from "./session.ts";
 import {
-  hashText,
   lastUserMessageText,
   statedClaimsInReadingOrder,
   statesOutOfTime,
-} from "./consistencyReview.ts";
-import type { SopSession } from "./session.ts";
+} from "./sessionQueries.ts";
+import { hashText } from "./text.ts";
 import type { WriteContext } from "./writeContext.ts";
 
 /**

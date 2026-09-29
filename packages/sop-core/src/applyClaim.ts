@@ -14,29 +14,27 @@ import {
   checkSessionLimits,
   commit,
   failure,
-  hasUserMessage,
   isClaimWriteError,
   type SessionChanges,
   STATUSES_WRITABLE_BY,
-  userMessageText,
   validateText,
   withoutCopiedDocumentDate,
 } from "./claimWriteSupport.ts";
 import type { ResolveConflictCommand } from "./conflictResolution.ts";
 import { applyResolveConflict } from "./conflictResolution.ts";
-import { keepsPassageMeaning, pairConflictsAfterWrite } from "./detectConflicts.ts";
+import { pairConflictsAfterWrite } from "./detectConflicts.ts";
+import { findPassage, isPassageStale } from "./referenceQueries.ts";
 import {
-  findPassage,
-  isPassageStale,
   MAX_CLAIMS_PER_PASSAGE,
   type ReferenceMaterial,
   updatePassage,
 } from "./referenceSchema.ts";
-import { usesPassageWording } from "./references.ts";
 import type { ReviewClaimCommand } from "./reviewClaim.ts";
 import { applyReviewCommand } from "./reviewClaim.ts";
 import type { SopSession } from "./session.ts";
+import { hasUserMessage, userMessageText } from "./sessionQueries.ts";
 import type { SopFieldName } from "./sopFields.ts";
+import { keepsPassageMeaning, usesPassageWording } from "./statementComparison.ts";
 import { areNumbersSupported, normalizeStatement } from "./text.ts";
 import type { WriteContext } from "./writeContext.ts";
 

@@ -12,57 +12,14 @@ import {
   MIN_CLAIMS_IN_A_MISMATCH,
 } from "./consistencyReviewSchema.ts";
 import type { SopSession } from "./session.ts";
+import {
+  lastUserMessageText,
+  statedClaimsInReadingOrder,
+  statesOutOfTime,
+} from "./sessionQueries.ts";
 import type { SopFieldName } from "./sopFields.ts";
+import { hashText } from "./text.ts";
 import type { WriteContext } from "./writeContext.ts";
-
-/**
- * What a person says when they want the questions to stop. Deliberately narrow, and in the first
- * person: "there is no time limit for appeals" and "appeals filed out of time go to Legal" are statements about the process, not requests. A
- * false positive costs one consistency question that is not asked, and nothing else, because the
- * ordinary agenda never reads this.
- */
-const OUT_OF_TIME_PATTERN =
-  /\b(?:i'?m|i am|we'?re|we are)(?: (?:really|totally|just|almost))? (?:out of|running out of) time\b|\bi (?:have|got) no (?:more )?time|\bi (?:don'?t|do not) have (?:much |any |more |the )?time|no more questions|stop asking|that'?s (?:all|everything)|that is (?:all|everything)|i'?m done|i am done/i;
-
-export function statesOutOfTime(userMessage: string): boolean {
-  return OUT_OF_TIME_PATTERN.test(userMessage);
-}
-
-/**
- * The claims a consistency review reads: what the person stated (observed or confirmed), with the
- * procedure's steps in their real order. A suggestion is not the person's word, an unknown has no
- * text, and a passage from an upload is not a claim at all until the person agrees with it, when it
- * is their own statement.
- */
-export function statedClaimsInReadingOrder(session: SopSession): Claim[] {
-  const isStated = (claim: Claim) =>
-    claim.value !== null && (claim.status === "observed" || claim.status === "confirmed");
-  const stated = session.claims.filter(isStated);
-  const byId = new Map(stated.map((claim) => [claim.claimId, claim]));
-  const orderedSteps = session.procedureOrder.flatMap((claimId) => {
-    const step = byId.get(claimId);
-    return step === undefined ? [] : [step];
-  });
-  const stepIds = new Set(orderedSteps.map((step) => step.claimId));
-  return [
-    ...orderedSteps,
-    ...stated.filter((claim) => claim.field !== "procedure" || !stepIds.has(claim.claimId)),
-  ];
-}
-
-/**
- * A fixed-size hash of a string (FNV-1a, 32 bit), so a fingerprint stays short whatever the
- * claims hold. Shared with the claim-depth review, which fingerprints its own, differently-scoped
- * candidate set the same way.
- */
-export function hashText(text: string): string {
-  let hash = 0x811c9dc5;
-  for (let index = 0; index < text.length; index += 1) {
-    hash ^= text.charCodeAt(index);
-    hash = Math.imul(hash, 0x01000193) >>> 0;
-  }
-  return hash.toString(16).padStart(8, "0");
-}
 
 /**
  * A fingerprint of what the claims say: the stated claims' field, text, note and date, in reading
@@ -81,15 +38,6 @@ export function consistencyBasisOf(session: SopSession): string {
     ]),
   );
   return `${claims.length}:${hashText(text)}`;
-}
-
-/** The text of the latest user message, or empty when there is none. Shared with the claim-depth review. */
-export function lastUserMessageText(session: SopSession): string {
-  for (let index = session.messages.length - 1; index >= 0; index -= 1) {
-    const message = session.messages[index];
-    if (message?.role === "user") return message.text;
-  }
-  return "";
 }
 
 /** Whether the interview has reached the point where the recorded claims can be read as a whole. */

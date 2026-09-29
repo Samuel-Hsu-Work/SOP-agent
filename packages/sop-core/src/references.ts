@@ -1,18 +1,20 @@
-import type { Claim, ClaimWriteErrorCode } from "./claim.ts";
+import type { ClaimWriteErrorCode } from "./claim.ts";
 import { type ClaimWriteError, checkSessionLimits } from "./claimWriteSupport.ts";
-import { raiseReferenceConflicts, statesTheSameThing } from "./detectConflicts.ts";
-import { type DocumentFileKind, type PassageDraft, passageDraftSchema } from "./documentWire.ts";
+import { raiseReferenceConflicts } from "./detectConflicts.ts";
+import type { DocumentFileKind } from "./documentFile.ts";
+import { type PassageDraft, passageDraftSchema } from "./documentWire.ts";
 import { MAX_REFERENCE_DOCUMENTS, MAX_REFERENCE_PASSAGES } from "./limits.ts";
+import { findPassage, isPassageStale } from "./referenceQueries.ts";
 import {
-  findPassage,
-  isPassageStale,
   MAX_TARGET_CLAIMS,
   MAX_TIMES_NOT_ASKED,
   type ReferencePassage,
   updatePassage,
 } from "./referenceSchema.ts";
 import type { SopSession } from "./session.ts";
-import { normalizeStatement, quantitiesIn, significantWordsOf } from "./text.ts";
+import { isStatedClaim } from "./sessionQueries.ts";
+import { statesTheSameThing, usesPassageWording } from "./statementComparison.ts";
+import { normalizeStatement } from "./text.ts";
 import type { WriteContext } from "./writeContext.ts";
 
 /*
@@ -20,11 +22,6 @@ import type { WriteContext } from "./writeContext.ts";
  * outside the SOP. It becomes SOP content only when the person says it applies, and then as their
  * own statement; if it disagrees with what they said, conflict detection puts both sides to them.
  */
-
-/** A claim the person stands behind: something they said, or something they confirmed. */
-function isStated(claim: Claim): boolean {
-  return claim.value !== null && (claim.status === "observed" || claim.status === "confirmed");
-}
 
 /**
  * What the SOP is about, in the person's own words: their stated purpose and scope. A document is
@@ -36,7 +33,7 @@ export function sopTargetOf(session: SopSession): {
   claimIds: string[];
 } {
   const stated = session.claims.filter(
-    (claim) => isStated(claim) && (claim.field === "purpose" || claim.field === "scope"),
+    (claim) => isStatedClaim(claim) && (claim.field === "purpose" || claim.field === "scope"),
   );
   const textsOf = (field: "purpose" | "scope") =>
     stated.filter((claim) => claim.field === field).map((claim) => claim.value?.text ?? "");
@@ -55,7 +52,7 @@ export function hasSopTarget(session: SopSession): boolean {
 export function isAlreadyStated(session: SopSession, passage: PassageDraft | ReferencePassage) {
   return session.claims.some(
     (claim) =>
-      isStated(claim) &&
+      isStatedClaim(claim) &&
       claim.field === passage.field &&
       statesTheSameThing(passage.statement, claim.value?.text ?? ""),
   );
@@ -248,32 +245,6 @@ function isSameDraft(first: PassageDraft, second: PassageDraft): boolean {
 /** Passages that may still be put to the person: not yet offered, and judged against the current target. */
 export function isPassageOpen(session: SopSession, passage: ReferencePassage): boolean {
   return passage.state === "open" && !isPassageStale(session, passage);
-}
-
-/**
- * How much of a passage's words, and figures, a text must use to be about that passage: a reply
- * that puts it to the person, or a user's message that states it first. Both reword it, so this is
- * lower than the conflict rule's overlap; a question that only shares the field's topic uses far
- * fewer of them.
- */
-export const PASSAGE_WORDING_OVERLAP = 0.4;
-
-function wordsAndFiguresOf(text: string): Set<string> {
-  return new Set([...significantWordsOf(text), ...quantitiesIn(text)]);
-}
-
-/**
- * Whether a text uses enough of a passage's wording to be about it. Deterministic, and judged on the
- * text itself: a passage handed to the agent is not asked just because it was handed over, and a
- * passage is not what the user said just because the agent says so.
- */
-export function usesPassageWording(text: string, statement: string): boolean {
-  const passageWords = wordsAndFiguresOf(statement);
-  if (passageWords.size === 0) return false;
-  const textWords = wordsAndFiguresOf(text);
-  let shared = 0;
-  for (const word of passageWords) if (textWords.has(word)) shared += 1;
-  return shared / passageWords.size >= PASSAGE_WORDING_OVERLAP;
 }
 
 /**

@@ -9,8 +9,6 @@ import {
   needsConsistencyReview,
   nextConsistencyQuestion,
   pendingMismatchClaims,
-  statedClaimsInReadingOrder,
-  statesOutOfTime,
 } from "./consistencyReview.ts";
 import {
   type ConsistencyAnalysisOutput,
@@ -21,6 +19,7 @@ import {
 import { buildInterviewAgenda } from "./interviewAgenda.ts";
 import { addReferenceDocument } from "./references.ts";
 import { type SopSession, sopSessionSchema } from "./session.ts";
+import { statedClaimsInReadingOrder, statesOutOfTime } from "./sessionQueries.ts";
 import type { SopFieldName } from "./sopFields.ts";
 import {
   buildReferenceUpload,

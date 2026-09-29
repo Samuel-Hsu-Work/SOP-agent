@@ -7,7 +7,7 @@ import {
   UNRESOLVED_STATUSES,
 } from "./claim.ts";
 import { computeGaps, type FieldGap } from "./computeGaps.ts";
-import { findPassage } from "./referenceSchema.ts";
+import { findPassage } from "./referenceQueries.ts";
 import type { SessionStatus, SopSession } from "./session.ts";
 import { type FieldClass, SOP_FIELDS, type SopFieldName } from "./sopFields.ts";
 

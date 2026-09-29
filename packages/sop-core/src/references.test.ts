@@ -8,7 +8,6 @@ import {
 import { totalClaimTextLength } from "./claim.ts";
 import { statesCalendarDate } from "./claimWriteSupport.ts";
 import { computeGaps } from "./computeGaps.ts";
-import { keepsPassageMeaning } from "./detectConflicts.ts";
 import {
   buildInterviewAgenda,
   pendingDocumentPassages,
@@ -20,18 +19,19 @@ import {
   MAX_REFERENCE_PASSAGES,
   MAX_TOTAL_CLAIM_TEXT,
 } from "./limits.ts";
-import { findPassage, MAX_TIMES_NOT_ASKED } from "./referenceSchema.ts";
+import { findPassage } from "./referenceQueries.ts";
+import { MAX_TIMES_NOT_ASKED } from "./referenceSchema.ts";
 import {
   addReferenceDocument,
   declineDocumentPassage,
   markDocumentPassagesOffered,
   settleShownDocumentPassages,
   sopTargetOf,
-  usesPassageWording,
 } from "./references.ts";
 import { type SopSession, sopSessionSchema } from "./session.ts";
 import { buildSopDocument } from "./sopDocument.ts";
 import type { SopFieldName } from "./sopFields.ts";
+import { keepsPassageMeaning, usesPassageWording } from "./statementComparison.ts";
 import {
   buildReferenceUpload,
   createDeterministicContext,

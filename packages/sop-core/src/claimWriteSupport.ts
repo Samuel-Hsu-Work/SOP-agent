@@ -214,15 +214,6 @@ export function isClaimWriteError(
   return "code" in result;
 }
 
-export function hasUserMessage(session: SopSession, messageId: string): boolean {
-  return session.messages.some((message) => message.role === "user" && message.id === messageId);
-}
-
-/** The text of the user message a write cites, or "" when there is none. */
-export function userMessageText(session: SopSession, messageId: string): string {
-  return session.messages.find((message) => message.id === messageId)?.text ?? "";
-}
-
 const MONTH_NAMES = [
   "january",
   "february",
