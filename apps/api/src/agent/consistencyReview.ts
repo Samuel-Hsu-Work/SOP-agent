@@ -52,8 +52,8 @@ Rules:
 
 /**
  * The claims as the model reads them: JSON, so no character in a claim can end a delimiter and
- * escape into the instructions. Only what the person stated is sent (not the conversation, not a
- * suggestion, not anything read from a document), and no file name or quote.
+ * escape into the instructions. Only observed and confirmed claims are sent (not the conversation,
+ * not a suggestion, not a document rule the person has not confirmed), and no file name or quote.
  */
 export function renderConsistencyReviewInput(session: SopSession): string {
   return JSON.stringify({
