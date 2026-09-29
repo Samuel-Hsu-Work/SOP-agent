@@ -6,10 +6,10 @@ import {
   applyClaim,
   type ClaimWriteCommand,
   declineDocumentPassage,
-  markDocumentPassagesOffered,
   type SopFieldName,
   type SopSession,
   selectDocumentPassages,
+  settleShownDocumentPassages,
 } from "@sop-agent/sop-core";
 import { createDeterministicContext } from "@sop-agent/sop-core/testing";
 import type { SeedStep, Transcript, TranscriptTurn } from "./evalTypes.ts";
@@ -54,6 +54,10 @@ export function buildTranscript(input: {
         },
       ],
     };
+    // As a real turn does: the state shows passages before the writes and again after them.
+    const shownPassageIds = new Set(
+      selectDocumentPassages(session).map((passage) => passage.passageId),
+    );
     for (const command of fixture.commands ?? []) {
       const result = applyClaim(
         session,
@@ -72,11 +76,13 @@ export function buildTranscript(input: {
       if (!result.ok) throw new Error(`fixture failed: ${result.error.code}`);
       session = result.session;
     }
-    // As a real turn does: what the state handed the agent this turn counts as put to the expert.
-    session = markDocumentPassagesOffered(
+    for (const passage of selectDocumentPassages(session)) shownPassageIds.add(passage.passageId);
+    // A passage shown to the agent counts as put to the expert only if the reply put it to them.
+    session = settleShownDocumentPassages(
       session,
-      selectDocumentPassages(session).map((passage) => passage.passageId),
-    );
+      [...shownPassageIds],
+      fixture.failure === undefined ? fixture.reply : "",
+    ).session;
     turns.push({
       expertLine: fixture.expertLine ?? "An expert line.",
       assistantText: fixture.failure === undefined ? fixture.reply : null,

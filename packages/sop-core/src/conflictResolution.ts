@@ -9,10 +9,19 @@ import {
   hasUserMessage,
   isClaimWriteError,
   type SessionChanges,
+  userMessageText,
   validateText,
+  withoutCopiedDocumentDate,
 } from "./claimWriteSupport.ts";
-import { updatePassage } from "./referenceSchema.ts";
+import { keepsPassageMeaning } from "./detectConflicts.ts";
+import {
+  findPassage,
+  MAX_CLAIMS_PER_PASSAGE,
+  type ReferencePassage,
+  updatePassage,
+} from "./referenceSchema.ts";
 import type { SopSession } from "./session.ts";
+import { areNumbersSupported } from "./text.ts";
 import type { WriteContext } from "./writeContext.ts";
 
 /**
@@ -27,6 +36,13 @@ export interface ResolveConflictCommand {
   statement: string;
   note: string | null;
   effectiveDate: string | null;
+  /**
+   * The document side of the pair whose rule the answer states, when the user says that side is
+   * right or that both sides mean the same. The answer then rests on that side's passage, so the SOP
+   * keeps showing the document behind it; otherwise null. Two manual-test conflicts settled as "they
+   * say the same thing" lost their document this way, and one kept the document's date without it.
+   */
+  documentSideClaimId: string | null;
   /** The user message that holds the final answer. Must exist in the session. */
   sourceMessageId: string;
 }
@@ -60,6 +76,47 @@ export function applyResolveConflict(
     return failure("source_message_not_found", "The claim must cite an existing user message.");
   }
 
+  const statement = text.statement ?? "";
+  const userText = userMessageText(session, command.sourceMessageId);
+  let restsOn: ReferencePassage | null = null;
+  // A command built before this field existed leaves it out: that answer rests on no document.
+  const documentSideClaimId = command.documentSideClaimId ?? null;
+  if (documentSideClaimId !== null) {
+    const side = [target, partner].find((claim) => claim.claimId === documentSideClaimId);
+    const passage =
+      side?.source.type === "policy_document" && side.basedOnPassageId !== null
+        ? findPassage(session, side.basedOnPassageId)
+        : undefined;
+    if (passage === undefined) {
+      return failure(
+        "not_a_document_side",
+        "documentSideClaimId must be the id of the side of this conflict that comes from an uploaded document, or null.",
+      );
+    }
+    if (
+      !areNumbersSupported(statement, [passage.citation.quote, passage.statement, userText]) ||
+      !keepsPassageMeaning(statement, passage.statement)
+    ) {
+      return failure(
+        "statement_not_supported",
+        "The answer does not keep the document side's figures, limits or negation, so it is not the document's rule. Set documentSideClaimId to null.",
+      );
+    }
+    restsOn = passage;
+  }
+  // An answer that does not rest on a document is not the document's rule, so it never carries a
+  // document side's date unless the user stated it.
+  const effectiveDate =
+    restsOn !== null
+      ? (text.effectiveDate ?? restsOn.effectiveDate)
+      : withoutCopiedDocumentDate(
+          text.effectiveDate,
+          [target, partner]
+            .filter((claim) => claim.source.type === "policy_document")
+            .map((claim) => claim.effectiveDate),
+          userText,
+        );
+
   const timestamp = context.now();
   // The earlier of the two, in the procedure order or otherwise in claim order, keeps its place.
   const members = [target, partner];
@@ -80,31 +137,40 @@ export function applyResolveConflict(
   const resolved: Claim = {
     claimId: context.newId(),
     field: target.field,
-    value: buildValue(target.field, text.statement ?? ""),
+    value: buildValue(target.field, statement),
     status: "observed",
     source: {
       type: "employee_statement",
       reference: { kind: "message", messageId: command.sourceMessageId },
     },
     authority: "observed_practice",
-    effectiveDate: text.effectiveDate,
+    effectiveDate,
     note: text.note,
     createdByType: "agent",
     conflictsWithClaimId: null,
-    basedOnPassageId: null,
+    basedOnPassageId: restsOn?.passageId ?? null,
     createdAt: timestamp,
     updatedAt: timestamp,
   };
 
-  // The document side's passage is settled by this answer, so it never raises the conflict again.
+  // A document side's passage is settled by this answer, so it never raises the conflict again. The
+  // one the answer rests on is used instead, like a passage the user agreed with.
   let references = session.references;
   for (const member of [keeper, dropped]) {
     const passageId = member.source.type === "policy_document" ? member.basedOnPassageId : null;
     if (passageId === null) continue;
-    references = updatePassage(references, passageId, (passage) => ({
-      ...passage,
-      state: "settled",
-    }));
+    references = updatePassage(references, passageId, (passage) =>
+      passageId === restsOn?.passageId
+        ? {
+            ...passage,
+            state: "used",
+            claimIds:
+              passage.claimIds.length >= MAX_CLAIMS_PER_PASSAGE
+                ? passage.claimIds
+                : [...passage.claimIds, resolved.claimId],
+          }
+        : { ...passage, state: "settled" },
+    );
   }
 
   const changes: SessionChanges = {

@@ -6,7 +6,9 @@ import {
   type RecordClaimCommand,
 } from "./applyClaim.ts";
 import { totalClaimTextLength } from "./claim.ts";
+import { statesCalendarDate } from "./claimWriteSupport.ts";
 import { computeGaps } from "./computeGaps.ts";
+import { keepsPassageMeaning } from "./detectConflicts.ts";
 import {
   buildInterviewAgenda,
   pendingDocumentPassages,
@@ -18,12 +20,14 @@ import {
   MAX_REFERENCE_PASSAGES,
   MAX_TOTAL_CLAIM_TEXT,
 } from "./limits.ts";
-import { findPassage } from "./referenceSchema.ts";
+import { findPassage, MAX_TIMES_NOT_ASKED } from "./referenceSchema.ts";
 import {
   addReferenceDocument,
   declineDocumentPassage,
   markDocumentPassagesOffered,
+  settleShownDocumentPassages,
   sopTargetOf,
+  usesPassageWording,
 } from "./references.ts";
 import { type SopSession, sopSessionSchema } from "./session.ts";
 import { buildSopDocument } from "./sopDocument.ts";
@@ -527,7 +531,7 @@ describe("answering a passage", () => {
     });
   });
 
-  it("refuses an answer to a passage that was never put to the user, or as a suggestion", () => {
+  it("refuses a different answer to a passage never put to the user, or an answer as a suggestion", () => {
     const { targeted, upload, apply, recordCommand, onlyPassage, offered, passageId } = answered();
     const notOffered = upload(targeted, "policy.md", [
       { field: "completionCriteria", statement: CLOCK_OUT },
@@ -540,13 +544,153 @@ describe("answering a passage", () => {
       recordCommand("completionCriteria", CLOCK_OUT, {
         documentPassage: { passageId: id, userAgrees: true },
       });
-    expect(codeOf(notOffered, agreeing(onlyPassage(notOffered).passageId))).toBe(
-      "passage_not_offered",
-    );
+    expect(
+      codeOf(
+        notOffered,
+        recordCommand("completionCriteria", "Cashiers leave when the Team Lead says so.", {
+          documentPassage: { passageId: onlyPassage(notOffered).passageId, userAgrees: false },
+        }),
+      ),
+    ).toBe("passage_not_offered");
     expect(codeOf(offered, agreeing("missing"))).toBe("passage_not_found");
     expect(codeOf(offered, { ...agreeing(passageId), status: "proposed" })).toBe(
       "wrong_command_for_status",
     );
+  });
+
+  it("rests the user's own words on a passage they stated before being asked, instead of raising a conflict", () => {
+    const { targeted, upload, applyOk, recordCommand, onlyPassage } = setup(
+      "Cashiers clock out by 11:30.",
+    );
+    const notOffered = upload(targeted, "policy.md", [
+      { field: "completionCriteria", statement: CLOCK_OUT, effectiveDate: "2026-09-01" },
+    ]).session;
+    const passageId = onlyPassage(notOffered).passageId;
+    const result = applyOk(
+      notOffered,
+      recordCommand("completionCriteria", "Cashiers clock out by 11:30 PM.", {
+        documentPassage: { passageId, userAgrees: true },
+      }),
+    );
+    // The user never saw the passage, so its date is not theirs either.
+    expect(result.claim).toMatchObject({
+      status: "observed",
+      basedOnPassageId: passageId,
+      effectiveDate: null,
+    });
+    expect(findPassage(result.session, passageId)?.state).toBe("used");
+    expect(result.session.claims.some((claim) => claim.status === "conflict")).toBe(false);
+  });
+
+  it("refuses to rest the user's words on a passage they share a topic with but not a meaning", () => {
+    const cases = [
+      {
+        userText: "Cashiers may clock out before 11:30 if the Team Lead agrees.",
+        passage: "Cashiers may not clock out before 11:30.",
+        statement: "Cashiers may clock out before 11:30 if the Team Lead agrees.",
+      },
+      {
+        userText: "The Team Lead reconciles the cash drawers weekly.",
+        passage: "The Team Lead reconciles the cash drawers daily.",
+        statement: "The Team Lead reconciles the cash drawers weekly.",
+      },
+      {
+        userText: "Payments over $10,000 need the CFO.",
+        passage: "Payments over $25,000 need the CFO.",
+        statement: "Payments over $10,000 need the CFO.",
+      },
+    ];
+    // The agent's statement copies the passage, but the user's own message flips its negation.
+    cases.push({
+      userText: "Cashiers may clock out before 11:30 if the Team Lead agrees.",
+      passage: "Cashiers may not clock out before 11:30.",
+      statement: "Cashiers may not clock out before 11:30.",
+    });
+    for (const { userText, passage, statement } of cases) {
+      const { targeted, upload, apply, recordCommand, onlyPassage } = setup(userText);
+      const uploaded = upload(targeted, "policy.md", [
+        { field: "completionCriteria", statement: passage },
+      ]).session;
+      const result = apply(
+        uploaded,
+        recordCommand("completionCriteria", statement, {
+          documentPassage: { passageId: onlyPassage(uploaded).passageId, userAgrees: true },
+        }),
+      );
+      expect(result.ok ? null : result.error.code, passage).toBe("statement_not_supported");
+    }
+  });
+
+  it("takes a figure only from the user's words when they were never shown the passage", () => {
+    const { targeted, upload, apply, recordCommand, onlyPassage } = setup(
+      "Cashiers clock out when the Team Lead releases them.",
+    );
+    const notOffered = upload(targeted, "policy.md", [
+      { field: "completionCriteria", statement: CLOCK_OUT },
+    ]).session;
+    const result = apply(
+      notOffered,
+      recordCommand("completionCriteria", CLOCK_OUT, {
+        documentPassage: { passageId: onlyPassage(notOffered).passageId, userAgrees: true },
+      }),
+    );
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.error.code).toBe("statement_not_supported");
+  });
+
+  it("never gives the user's own different answer the document's effective date", () => {
+    const { targeted, upload, offer, applyOk, recordCommand, onlyPassage } = setup();
+    const offered = offer(
+      upload(targeted, "policy.md", [
+        { field: "completionCriteria", statement: CLOCK_OUT, effectiveDate: "2026-09-01" },
+      ]).session,
+    );
+    const result = applyOk(
+      offered,
+      recordCommand("completionCriteria", "Cashiers clock out when the Team Lead releases them.", {
+        effectiveDate: "2026-09-01",
+        documentPassage: { passageId: onlyPassage(offered).passageId, userAgrees: false },
+      }),
+    );
+    expect(result.claim.effectiveDate).toBeNull();
+  });
+
+  it("drops a document's date when the user's message names only its year", () => {
+    const { targeted, upload, offer, applyOk, recordCommand, onlyPassage } = setup(
+      "Ours changed in 2026: the Team Lead releases cashiers.",
+    );
+    const offered = offer(
+      upload(targeted, "policy.md", [
+        { field: "completionCriteria", statement: CLOCK_OUT, effectiveDate: "2026-09-01" },
+      ]).session,
+    );
+    const result = applyOk(
+      offered,
+      recordCommand("completionCriteria", "The Team Lead releases the cashiers.", {
+        effectiveDate: "2026-09-01",
+        documentPassage: { passageId: onlyPassage(offered).passageId, userAgrees: false },
+      }),
+    );
+    expect(result.claim.effectiveDate).toBeNull();
+  });
+
+  it("keeps a date the user states themselves, even when the document gives the same one", () => {
+    const { targeted, upload, offer, applyOk, recordCommand, onlyPassage } = setup(
+      "Ours is different: the Team Lead releases cashiers, starting September 1, 2026.",
+    );
+    const offered = offer(
+      upload(targeted, "policy.md", [
+        { field: "completionCriteria", statement: CLOCK_OUT, effectiveDate: "2026-09-01" },
+      ]).session,
+    );
+    const result = applyOk(
+      offered,
+      recordCommand("completionCriteria", "The Team Lead releases the cashiers.", {
+        effectiveDate: "2026-09-01",
+        documentPassage: { passageId: onlyPassage(offered).passageId, userAgrees: false },
+      }),
+    );
+    expect(result.claim.effectiveDate).toBe("2026-09-01");
   });
 
   it("refuses a spelled-out figure the passage never gave, such as one approver or fourteen days", () => {
@@ -686,12 +830,106 @@ describe("answering a passage", () => {
       statement: "Cashiers clock out by 11:45 PM.",
       note: null,
       effectiveDate: null,
+      documentSideClaimId: null,
       sourceMessageId: messageId,
     });
     expect(resolved.session.claims.filter((claim) => claim.status === "conflict")).toEqual([]);
     expect(onlyState(resolved.session)).toEqual(["settled"]);
     expect(resolved.session.claims).toHaveLength(2);
     expect(sopSessionSchema.safeParse(resolved.session).success).toBe(true);
+  });
+
+  it("keeps the document behind an answer that says the document side is right, or that both agree", () => {
+    const { targeted, upload, record, apply, applyOk, messageId } = setup(
+      "They say the same thing: cashiers ask the Team Lead before extending a shift.",
+    );
+    const uploaded = upload(targeted, "policy.md", [
+      {
+        field: "authorization",
+        statement: "A cashier should refer shift extensions to the closing Team Lead.",
+        effectiveDate: "2026-09-01",
+      },
+    ]).session;
+    const contradicted = record(
+      uploaded,
+      "authorization",
+      "A cashier must ask the Team Lead before extending a shift.",
+    );
+    const documentSide = contradicted.session.claims.find(
+      (claim) => claim.source.type === "policy_document",
+    );
+    if (documentSide === undefined) throw new Error("setup failed: no conflict");
+    const resolveCommand = (documentSideClaimId: string | null) => ({
+      kind: "resolveConflict" as const,
+      createdByType: "agent" as const,
+      claimId: contradicted.claim.claimId,
+      statement: "Cashiers are expected to ask the Team Lead before extending a shift.",
+      note: null,
+      effectiveDate: null,
+      documentSideClaimId,
+      sourceMessageId: messageId,
+    });
+
+    const refused = apply(contradicted.session, resolveCommand(contradicted.claim.claimId));
+    expect(refused.ok ? null : refused.error.code).toBe("not_a_document_side");
+
+    const resolved = applyOk(contradicted.session, resolveCommand(documentSide.claimId));
+    expect(resolved.claim).toMatchObject({
+      status: "observed",
+      basedOnPassageId: documentSide.basedOnPassageId,
+      effectiveDate: "2026-09-01",
+    });
+    expect(onlyState(resolved.session)).toEqual(["used"]);
+    expect(sopSessionSchema.safeParse(resolved.session).success).toBe(true);
+    const item = buildSopDocument(resolved.session).sections.find(
+      (section) => section.field === "authorization",
+    )?.items[0];
+    expect(item?.sourceLine).toBe(
+      "from the interview, based on policy.md, § Rules, effective 2026-09-01",
+    );
+  });
+
+  it("refuses to rest an answer on the document side when it drops the document's figure", () => {
+    const { targeted, upload, record, apply, messageId } = setup(
+      "The document is right, it's over $25,000.",
+    );
+    const uploaded = upload(targeted, "policy.md", [
+      { field: "authorization", statement: "Payments over $10,000 need the CFO." },
+    ]).session;
+    const contradicted = record(uploaded, "authorization", "Payments over $25,000 need the CFO.");
+    const documentSide = contradicted.session.claims.find(
+      (claim) => claim.source.type === "policy_document",
+    );
+    const result = apply(contradicted.session, {
+      kind: "resolveConflict",
+      createdByType: "agent",
+      claimId: contradicted.claim.claimId,
+      statement: "Payments over $25,000 need the CFO.",
+      note: null,
+      effectiveDate: null,
+      documentSideClaimId: documentSide?.claimId ?? "",
+      sourceMessageId: messageId,
+    });
+    expect(result.ok ? null : result.error.code).toBe("statement_not_supported");
+  });
+
+  it("drops a document side's date from an answer that does not rest on the document", () => {
+    const { targeted, upload, record, applyOk, messageId } = setup();
+    const uploaded = upload(targeted, "policy.md", [
+      { field: "completionCriteria", statement: CLOCK_OUT, effectiveDate: "2026-09-01" },
+    ]).session;
+    const contradicted = record(uploaded, "completionCriteria", "Cashiers clock out by 11:45 PM.");
+    const resolved = applyOk(contradicted.session, {
+      kind: "resolveConflict",
+      createdByType: "agent",
+      claimId: contradicted.claim.claimId,
+      statement: "Cashiers clock out by 11:45 PM.",
+      note: null,
+      effectiveDate: "2026-09-01",
+      documentSideClaimId: null,
+      sourceMessageId: messageId,
+    });
+    expect(resolved.claim.effectiveDate).toBeNull();
   });
 
   it("refuses every passage write on an approved session", () => {
@@ -707,5 +945,187 @@ describe("answering a passage", () => {
       context,
     );
     expect(declined.ok).toBe(false);
+  });
+});
+
+describe("settling the passages handed to the agent", () => {
+  // Wording from a manual test, where one passage was handed over and the reply asked a general
+  // question instead; marking it offered anyway meant it was never put to the user.
+  const AUTHORIZATION =
+    "A cashier may not independently extend a scheduled shift and should refer remaining-work questions near shift end to the closing Team Lead.";
+  const GENERAL_QUESTION =
+    "I recorded the corrected timing and the late-departure report requirement. During closeout, what decisions can cashiers not make alone, and who decides instead?";
+
+  it("does not count a general question that shares the passage's topic words", () => {
+    const { targeted, upload } = setup();
+    const uploaded = upload(targeted, "policy.md", [
+      { field: "authorization", statement: "The manager approves refunds." },
+    ]).session;
+    const passageId = uploaded.references.passages[0]?.passageId ?? "";
+    expect(
+      settleShownDocumentPassages(uploaded, [passageId], "Who approves refunds?").askedIds,
+    ).toEqual([]);
+    expect(
+      settleShownDocumentPassages(
+        uploaded,
+        [passageId],
+        "Your uploaded policy says the manager approves refunds. Is that right?",
+      ).askedIds,
+    ).toEqual([passageId]);
+  });
+
+  it("tells a reply that puts a passage in its own words from one that asks something else", () => {
+    expect(
+      usesPassageWording(
+        "Your uploaded document says the closing Team Lead coordinates front-end operations and may assign, reorder, or defer work when store conditions require it. Is that how this process works?",
+        "The closing Team Lead coordinates front-end operations and may assign work, reorder activities, or defer an activity when store conditions require it.",
+      ),
+    ).toBe(true);
+    expect(
+      usesPassageWording(
+        "Your uploaded document says customers already purchasing at closing may finish before closing work interferes with service, and final-shift cashiers are normally scheduled until 11:30 p.m. and should complete duties within that shift. Do both rules apply here?",
+        "Final-shift cashiers are normally scheduled to clock out at 11:30 p.m. and should manage end-of-day duties within their scheduled shift.",
+      ),
+    ).toBe(true);
+    expect(usesPassageWording(GENERAL_QUESTION, AUTHORIZATION)).toBe(false);
+  });
+
+  it("offers only what the reply asked, and hands a passed-over passage back later", () => {
+    const { targeted, upload } = setup();
+    const uploaded = upload(targeted, "policy.md", [
+      { field: "authorization", statement: AUTHORIZATION },
+      { field: "completionCriteria", statement: CLOCK_OUT },
+    ]).session;
+    const [authorization, clockOut] = uploaded.references.passages;
+    if (authorization === undefined || clockOut === undefined) throw new Error("setup failed");
+
+    const settled = settleShownDocumentPassages(
+      uploaded,
+      [authorization.passageId],
+      GENERAL_QUESTION,
+    );
+    expect(settled.askedIds).toEqual([]);
+    expect(findPassage(settled.session, authorization.passageId)).toMatchObject({
+      state: "open",
+      timesNotAsked: 1,
+    });
+    // Behind the passage not handed over yet, but still there to be handed over.
+    expect(selectDocumentPassages(settled.session).map((passage) => passage.passageId)).toEqual([
+      clockOut.passageId,
+    ]);
+
+    const asked = settleShownDocumentPassages(
+      settled.session,
+      [authorization.passageId],
+      "Your uploaded document says a cashier may not extend a scheduled shift independently and should refer remaining-work questions to the closing Team Lead. Is that how it works?",
+    );
+    expect(asked.askedIds).toEqual([authorization.passageId]);
+    expect(findPassage(asked.session, authorization.passageId)?.state).toBe("offered");
+  });
+
+  it("stops handing over a passage the agent keeps passing over, and leaves it open", () => {
+    const { targeted, upload } = setup();
+    let session = upload(targeted, "policy.md", [
+      { field: "authorization", statement: AUTHORIZATION },
+    ]).session;
+    const passageId = session.references.passages[0]?.passageId ?? "";
+    for (let turn = 0; turn < MAX_TIMES_NOT_ASKED; turn += 1) {
+      expect(selectDocumentPassages(session).map((passage) => passage.passageId)).toEqual([
+        passageId,
+      ]);
+      session = settleShownDocumentPassages(session, [passageId], GENERAL_QUESTION).session;
+    }
+    expect(selectDocumentPassages(session)).toEqual([]);
+    expect(findPassage(session, passageId)?.state).toBe("open");
+    expect(sopSessionSchema.safeParse(session).success).toBe(true);
+  });
+});
+
+describe("conflicts with a confirmed suggestion", () => {
+  it("raises a conflict when a document disagrees with a suggestion the person confirmed", () => {
+    const { targeted, apply, applyOk, recordCommand, upload } = setup();
+    const suggested = applyOk(
+      targeted,
+      recordCommand("completionCriteria", "Cashiers clock out by 11:45 PM.", {
+        status: "proposed",
+      }),
+    );
+    const confirmed = apply(suggested.session, {
+      kind: "confirm",
+      createdByType: "user",
+      claimId: suggested.claim.claimId,
+    });
+    if (!confirmed.ok) throw new Error(`setup failed: ${confirmed.error.code}`);
+
+    const uploaded = upload(confirmed.session, "policy.md", [
+      { field: "completionCriteria", statement: CLOCK_OUT },
+    ]);
+    expect(uploaded.conflictsRaised).toBe(1);
+    expect(
+      uploaded.session.claims.find((claim) => claim.claimId === suggested.claim.claimId)?.status,
+    ).toBe("conflict");
+  });
+});
+
+describe("keepsPassageMeaning", () => {
+  it("allows a reworded statement that keeps the figures, limits and negation", () => {
+    expect(
+      keepsPassageMeaning(
+        "Cashiers cannot extend a shift on their own and ask the Team Lead instead.",
+        "A cashier may not independently extend a scheduled shift.",
+      ),
+    ).toBe(true);
+    expect(
+      keepsPassageMeaning(
+        "No cashier may clock out before the Team Lead has walked the front end.",
+        "Cashiers may not clock out before the Team Lead has walked the front end.",
+      ),
+    ).toBe(true);
+  });
+
+  it("refuses a statement that adds a figure of its own, even one that names the passage's", () => {
+    expect(
+      keepsPassageMeaning(
+        "Payments over $10,000 rather than $25,000 need the CFO.",
+        "Payments over $25,000 need the CFO.",
+      ),
+    ).toBe(false);
+  });
+
+  it("refuses one that drops or flips a figure, a frequency, a limit or a negation", () => {
+    const passage = "Refunds over $500 do not need a manager's approval.";
+    expect(keepsPassageMeaning("Refunds over $500 need a manager's approval.", passage)).toBe(
+      false,
+    );
+    expect(keepsPassageMeaning("Refunds over $300 don't need a manager's approval.", passage)).toBe(
+      false,
+    );
+    expect(
+      keepsPassageMeaning("Refunds under $500 don't need a manager's approval.", passage),
+    ).toBe(false);
+    expect(keepsPassageMeaning("Drawers are counted weekly.", "Drawers are counted daily.")).toBe(
+      false,
+    );
+  });
+});
+
+describe("statesCalendarDate", () => {
+  it("accepts the whole date in words or numbers, and nothing less", () => {
+    for (const text of [
+      "It started on September 1, 2026.",
+      "From 1 Sept 2026 on.",
+      "Since 2026-09-01.",
+      "Effective 9/1/2026.",
+    ]) {
+      expect(statesCalendarDate(text, "2026-09-01"), text).toBe(true);
+    }
+    for (const text of [
+      "It changed in 2026.",
+      "Since September 2026.",
+      "On the 1st, in 2025.",
+      "The September 2026 policy, version 1, governs us.",
+    ]) {
+      expect(statesCalendarDate(text, "2026-09-01"), text).toBe(false);
+    }
   });
 });

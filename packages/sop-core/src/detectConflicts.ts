@@ -88,6 +88,64 @@ function wordsFrom(text: string, vocabulary: ReadonlySet<string>): Set<string> {
   );
 }
 
+/** Negation words that say the same thing: "no cashier may", "cashiers may not", "never", "can't". */
+const PLAIN_NEGATIONS: ReadonlySet<string> = new Set(["not", "no", "never"]);
+
+/**
+ * The negations a text uses. "no", "never", "cannot" and "can't" all count as "not": they are the
+ * same plain negation said differently. "without" and "except" stay apart, since they limit a rule
+ * rather than negate it.
+ */
+function negationsIn(text: string): Set<string> {
+  const negations = new Set(
+    [...wordsFrom(text, NEGATION_WORDS)].map((word) => (PLAIN_NEGATIONS.has(word) ? "not" : word)),
+  );
+  if (/\bcannot\b|n['’]t\b/i.test(text)) negations.add("not");
+  return negations;
+}
+
+function isSameSet(first: ReadonlySet<string>, second: ReadonlySet<string>): boolean {
+  return first.size === second.size && [...first].every((word) => second.has(word));
+}
+
+/** Words that state how often: a figure written as a word. "Reconcile daily" is not "reconcile weekly". */
+const FREQUENCY_WORDS: ReadonlySet<string> = new Set([
+  "hourly",
+  "daily",
+  "nightly",
+  "weekly",
+  "biweekly",
+  "monthly",
+  "quarterly",
+  "yearly",
+  "annually",
+  "once",
+  "twice",
+  "half",
+]);
+
+function figuresIn(text: string): Set<string> {
+  return new Set([...quantitiesIn(text), ...wordsFrom(text, FREQUENCY_WORDS)]);
+}
+
+/**
+ * Whether `statement` keeps what gives `passageStatement` its meaning, beyond its topic: exactly the
+ * same figures and frequencies, every boundary word it uses, and the same negation. A statement may
+ * reword the passage and add detail, but no figure of its own: "over $10,000 rather than $25,000"
+ * still names the passage's figure while replacing it. It guards a statement resting on a passage
+ * the person never checked it against (they stated it first, or said a conflict's two sides mean
+ * the same), where the agent's reading alone would otherwise decide: word overlap says "may extend a
+ * shift" and "may not extend a shift" are about the same thing, which they are, and nothing more. A
+ * refusal only costs the old path, a conflict the person settles. A different approver or actor is
+ * not caught; that stays the agent's reading.
+ */
+export function keepsPassageMeaning(statement: string, passageStatement: string): boolean {
+  if (!isSameSet(figuresIn(statement), figuresIn(passageStatement))) return false;
+  if (!isSameSet(negationsIn(statement), negationsIn(passageStatement))) return false;
+  const qualifiers = wordsFrom(statement, QUALIFIER_WORDS);
+  return [...wordsFrom(passageStatement, QUALIFIER_WORDS)].every((word) => qualifiers.has(word));
+}
+
 /**
  * Does `claimText` already say what `statement` says? The same words, or every word that matters in
  * `statement`, every figure and every boundary word, and the same negation: "over $100" and "under
@@ -98,14 +156,7 @@ function wordsFrom(text: string, vocabulary: ReadonlySet<string>): Set<string> {
 export function statesTheSameThing(statement: string, claimText: string): boolean {
   if (normalizeStatement(statement) === normalizeStatement(claimText)) return true;
   if (!haveSameFigures(statement, claimText)) return false;
-  const negations = wordsFrom(statement, NEGATION_WORDS);
-  const claimNegations = wordsFrom(claimText, NEGATION_WORDS);
-  if (
-    negations.size !== claimNegations.size ||
-    [...negations].some((word) => !claimNegations.has(word))
-  ) {
-    return false;
-  }
+  if (!isSameSet(negationsIn(statement), negationsIn(claimText))) return false;
   const claimQualifiers = wordsFrom(claimText, QUALIFIER_WORDS);
   if ([...wordsFrom(statement, QUALIFIER_WORDS)].some((word) => !claimQualifiers.has(word))) {
     return false;
@@ -148,12 +199,16 @@ function disagreeAboutTheSameThing(firstText: string, secondText: string): boole
   return shorter > 0 && shared / shorter >= CONFLICT_TOPIC_OVERLAP;
 }
 
-/** A claim the person stands behind, and not already half of a conflict. */
+/**
+ * A claim the person stands behind, and not already half of a conflict: something they said, or a
+ * suggestion they confirmed. A confirmed suggestion keeps its `agent_suggestion` source, and the
+ * person vouched for it as much as for their own words, so a document can disagree with it too.
+ */
 function isUnpairedStatement(claim: Claim): boolean {
   return (
     claim.value !== null &&
     (claim.status === "observed" || claim.status === "confirmed") &&
-    claim.source.type === "employee_statement" &&
+    claim.source.type !== "policy_document" &&
     claim.conflictsWithClaimId === null
   );
 }

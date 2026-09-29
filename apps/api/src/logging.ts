@@ -60,6 +60,7 @@ export interface ChatTurnLog {
   claimDepthQuestionFocus: string | null;
   /** Document passages: counts only, never a statement, a quote or a file name. */
   documentPassagesOffered: number;
+  documentPassagesNotAsked: number;
   documentPassagesUsed: number;
   documentPassagesDeclined: number;
   referenceConflictsRaised: number;

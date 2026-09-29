@@ -46,7 +46,9 @@ const fieldSchema = z.enum(SOP_FIELD_NAMES).describe("Which SOP field the fact b
 const effectiveDateSchema = z
   .string()
   .nullable()
-  .describe("The date the fact takes effect, as YYYY-MM-DD, or null.");
+  .describe(
+    "The date the fact takes effect as YYYY-MM-DD, only when the user stated it; never copied from a document passage. Otherwise null.",
+  );
 
 const documentPassageSchema = z
   .object({
@@ -127,7 +129,18 @@ const resolveConflictToolSchema = z.object({
       "The user's final answer, in one plain sentence, in their own terms. It replaces both sides. If the user says the two sides agree, write the wording they agreed on.",
     ),
   effectiveDate: effectiveDateSchema,
-  note: z.string().nullable().describe("A short remark, such as why the user chose this, or null."),
+  note: z
+    .string()
+    .nullable()
+    .describe(
+      "Only what a reader of the SOP needs about where the answer comes from, or null. Never a retelling of the conversation.",
+    ),
+  documentSideClaimId: z
+    .string()
+    .nullable()
+    .describe(
+      "When the user says the uploaded document's side is right, or that both sides mean the same, the id of the side that comes from the document. Otherwise null.",
+    ),
 });
 
 const withdrawClaimToolSchema = z.object({
@@ -155,6 +168,9 @@ const recordClaimArgumentsSchema = recordClaimToolSchema.extend({
 });
 const correctClaimArgumentsSchema = correctClaimToolSchema.extend({
   documentPassage: documentPassageSchema.optional(),
+});
+const resolveConflictArgumentsSchema = resolveConflictToolSchema.extend({
+  documentSideClaimId: resolveConflictToolSchema.shape.documentSideClaimId.optional(),
 });
 
 export const AGENT_TOOLS: readonly ModelToolSpec[] = [
@@ -333,7 +349,7 @@ function parseToolCall(
       };
     }
     case "resolve_conflict": {
-      const parsed = resolveConflictToolSchema.safeParse(argumentsValue);
+      const parsed = resolveConflictArgumentsSchema.safeParse(argumentsValue);
       if (!parsed.success) return null;
       const args = parsed.data;
       return {
@@ -347,6 +363,7 @@ function parseToolCall(
           statement: args.statement,
           note: args.note,
           effectiveDate: args.effectiveDate,
+          documentSideClaimId: args.documentSideClaimId ?? null,
           sourceMessageId,
         },
       };

@@ -217,3 +217,62 @@ export function isClaimWriteError(
 export function hasUserMessage(session: SopSession, messageId: string): boolean {
   return session.messages.some((message) => message.role === "user" && message.id === messageId);
 }
+
+/** The text of the user message a write cites, or "" when there is none. */
+export function userMessageText(session: SopSession, messageId: string): string {
+  return session.messages.find((message) => message.id === messageId)?.text ?? "";
+}
+
+const MONTH_NAMES = [
+  "january",
+  "february",
+  "march",
+  "april",
+  "may",
+  "june",
+  "july",
+  "august",
+  "september",
+  "october",
+  "november",
+  "december",
+];
+
+/**
+ * Whether a text states this whole calendar date as one expression: "September 1, 2026", "Sept. 1st
+ * 2026", "1 September 2026", "the 1st of Sept, 2026", 2026-09-01, 9/1/2026 or 01/09/2026. Its parts
+ * found apart do not count: "the September 2026 policy, version 1" states no day.
+ */
+export function statesCalendarDate(text: string, calendarDate: string): boolean {
+  const [year, month, day] = calendarDate.split("-");
+  if (year === undefined || month === undefined || day === undefined) return false;
+  const lower = text.toLowerCase();
+  if (lower.includes(calendarDate)) return true;
+  const monthNumber = Number(month);
+  const dayNumber = Number(day);
+  const monthWord = `${(MONTH_NAMES[monthNumber - 1] ?? "").slice(0, 3)}[a-z]*\\.?`;
+  const dayWord = `0?${dayNumber}(?:st|nd|rd|th)?`;
+  const expressions = [
+    `\\b${monthWord}\\s+${dayWord},?\\s+${year}\\b`,
+    `\\b${dayWord}\\s+(?:of\\s+)?${monthWord},?\\s+${year}\\b`,
+    `(?:^|[^0-9])0?${monthNumber}/0?${dayNumber}/${year}\\b`,
+    `(?:^|[^0-9])0?${dayNumber}/0?${monthNumber}/${year}\\b`,
+  ];
+  return expressions.some((expression) => new RegExp(expression).test(lower));
+}
+
+/**
+ * A claim's effective date, unless it is a document's date the user never stated. A claim that
+ * does not rest on a document is not the document's rule, so it must not carry the document's date
+ * (a manual test printed one beside a rule the user had changed). The same value alone does not
+ * show that it was copied, though: a user may say their rule starts the same day. So the date stays
+ * when the user's message states that whole date.
+ */
+export function withoutCopiedDocumentDate(
+  effectiveDate: string | null,
+  documentDates: readonly (string | null)[],
+  userText: string,
+): string | null {
+  if (effectiveDate === null || !documentDates.includes(effectiveDate)) return effectiveDate;
+  return statesCalendarDate(userText, effectiveDate) ? effectiveDate : null;
+}

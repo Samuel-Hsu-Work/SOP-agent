@@ -147,6 +147,7 @@ export {
 export {
   CONFLICT_TOPIC_OVERLAP,
   disagreesWithWhatWasSaid,
+  keepsPassageMeaning,
   statesTheSameThing,
 } from "./detectConflicts.ts";
 export type {
@@ -202,6 +203,7 @@ export {
   EMPTY_REFERENCE_MATERIAL,
   findPassage,
   isPassageStale,
+  MAX_TIMES_NOT_ASKED,
   PASSAGE_STATES,
   referenceMaterialSchema,
   referencePassageSchema,
@@ -222,7 +224,10 @@ export {
   isAlreadyStated,
   isPassageOpen,
   markDocumentPassagesOffered,
+  PASSAGE_WORDING_OVERLAP,
+  settleShownDocumentPassages,
   sopTargetOf,
+  usesPassageWording,
 } from "./references.ts";
 export type { ReviewClaimCommand } from "./reviewClaim.ts";
 export { reviewActionsFor } from "./reviewClaim.ts";

@@ -240,6 +240,7 @@ describe("a-conflict-is-explained-then-resolved-by-the-final-answer", () => {
     statement: "Up to $25,000 the Finance Director; above that the CFO too.",
     note: null,
     effectiveDate: null,
+    documentSideClaimId: null,
   });
 
   it("passes when the agent explains both sides first and resolves only after the answer", () => {
@@ -338,5 +339,96 @@ describe("a-passage-that-does-not-apply-is-declined-not-recorded", () => {
     ]);
     expect(check(declinedScenario, "records-nothing-from-it", recorded)).toBe(false);
     expect(check(declinedScenario, "declines-the-passage", recorded)).toBe(false);
+  });
+});
+
+describe("a-passage-the-expert-states-first-is-linked-not-flagged", () => {
+  const scenario = scenarioById("a-passage-the-expert-states-first-is-linked-not-flagged");
+  const seeded = transcriptFor(scenario, []);
+  const statedFirst = () =>
+    transcriptFor(scenario, [
+      {
+        expertLine: scenario.expertLines[0] ?? "",
+        reply: "Recorded. How do cashiers know closing is finished?",
+        commands: [
+          {
+            ...recordCommand(
+              "authorization",
+              "Cashiers may not extend their shift on their own and ask the Team Lead when work is left near the end of the shift.",
+            ),
+            documentPassage: { passageId: firstPassageId(seeded), userAgrees: true },
+          },
+        ],
+      },
+    ]);
+
+  it("passes when the expert's own words rest on the passage and nothing was flagged", () => {
+    const transcript = statedFirst();
+    expect(check(scenario, "rests-the-statement-on-the-passage", transcript)).toBe(true);
+    expect(check(scenario, "document-passages-enter-only-after-being-offered", transcript)).toBe(
+      true,
+    );
+  });
+
+  it("fails the safety check when the expert's message never stated the passage", () => {
+    const transcript = copyOf(statedFirst());
+    const message = [...(transcript.turns[0]?.sessionAfter.messages ?? [])]
+      .reverse()
+      .find((entry) => entry.role === "user");
+    if (message === undefined) throw new Error("fixture failed");
+    message.text = "Let's keep going.";
+    expect(check(scenario, "document-passages-enter-only-after-being-offered", transcript)).toBe(
+      false,
+    );
+  });
+});
+
+describe("a-conflict-settled-as-the-same-keeps-the-document", () => {
+  const scenario = scenarioById("a-conflict-settled-as-the-same-keeps-the-document");
+  const seeded = transcriptFor(scenario, []);
+  const documentSide = seeded.seedSession.claims.find(
+    (claim) => claim.source.type === "policy_document",
+  );
+
+  it("starts from a conflict the real upload path raised on a paraphrase", () => {
+    expect(documentSide?.status).toBe("conflict");
+  });
+
+  const settledAsTheSame = () =>
+    transcriptFor(scenario, [
+      { reply: "You said cashiers must ask; the policy says they should refer it. Which holds?" },
+      {
+        expertLine: scenario.expertLines[1] ?? "",
+        reply: "Recorded.",
+        commands: [
+          {
+            kind: "resolveConflict",
+            claimId: documentSide?.claimId ?? "",
+            statement: "Cashiers are expected to ask the Team Lead before extending a shift.",
+            note: null,
+            effectiveDate: null,
+            documentSideClaimId: documentSide?.claimId ?? "",
+          },
+        ],
+      },
+    ]);
+
+  it("passes when the answer rests on the document side, and the safety checks hold", () => {
+    const transcript = settledAsTheSame();
+    expect(check(scenario, "keeps-the-document-behind-the-answer", transcript)).toBe(true);
+    expect(check(scenario, "document-passages-enter-only-after-being-offered", transcript)).toBe(
+      true,
+    );
+    expect(check(scenario, "never-confirms", transcript)).toBe(true);
+  });
+
+  it("fails the safety check when a claim rests on a passage whose conflict that turn left unsettled", () => {
+    const transcript = copyOf(settledAsTheSame());
+    const after = transcript.turns[1]?.sessionAfter;
+    if (after === undefined || documentSide === undefined) throw new Error("fixture failed");
+    after.claims.push(documentSide);
+    expect(check(scenario, "document-passages-enter-only-after-being-offered", transcript)).toBe(
+      false,
+    );
   });
 });

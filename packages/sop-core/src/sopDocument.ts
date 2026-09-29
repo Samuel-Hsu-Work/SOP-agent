@@ -120,25 +120,31 @@ function citationFor(session: SopSession, claim: Claim): DocumentCitation | null
   return findPassage(session, claim.basedOnPassageId)?.citation ?? null;
 }
 
+/**
+ * The label and date, then the note as a sentence of its own: a note is a sentence ("The rule is
+ * in the store handbook."), and joined with a comma it read "from the interview, The rule...".
+ *
+ * A statement that rests on a passage prints no note: the document and its location already say
+ * where it came from, and every note a manual test left on one only retold the interview ("From the
+ * uploaded document; the user said this applies", "the same rule as the report mentioned before").
+ * The note stays on the claim, and the review panel still shows it.
+ */
 function sourceLineFor(claim: Claim, citation: DocumentCitation | null): string {
   const hasText = claim.value !== null;
   const { reference } = claim.source;
-  const noteReplacesLabel =
-    claim.source.type === "agent_suggestion" && hasText && claim.note !== null;
+  const restsOnPassage = reference.kind !== "document" && citation !== null;
   const label =
     reference.kind === "document"
       ? `from ${reference.citation.documentName}, ${reference.citation.location}`
       : citation !== null
         ? `from the interview, based on ${citation.documentName}, ${citation.location}`
-        : noteReplacesLabel
+        : claim.source.type === "agent_suggestion" && hasText && claim.note !== null
           ? claim.note
           : SOURCE_LABELS[claim.source.type];
-  const parts = [label];
-  if (claim.effectiveDate !== null) parts.push(`effective ${claim.effectiveDate}`);
-  if (claim.source.type !== "agent_suggestion" && hasText && claim.note !== null) {
-    parts.push(claim.note);
-  }
-  return parts.join(", ");
+  const lead = claim.effectiveDate === null ? label : `${label}, effective ${claim.effectiveDate}`;
+  const printsNote =
+    claim.source.type !== "agent_suggestion" && hasText && claim.note !== null && !restsOnPassage;
+  return printsNote ? `${lead}. ${claim.note}` : lead;
 }
 
 /**

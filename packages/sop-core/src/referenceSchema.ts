@@ -38,6 +38,11 @@ export type PassageState = (typeof PASSAGE_STATES)[number];
 export const MAX_CLAIMS_PER_PASSAGE = 10;
 /** The purpose and scope claims a passage was judged against, at most (the first ones stated). */
 export const MAX_TARGET_CLAIMS = 20;
+/**
+ * How many times a passage is handed to the agent without being put to the person before it stops
+ * being handed over. It then stays in the upload panel as not discussed, for the person to raise.
+ */
+export const MAX_TIMES_NOT_ASKED = 3;
 
 export const referenceDocumentSchema = z.object({
   documentId: identifierSchema,
@@ -69,6 +74,13 @@ export const referencePassageSchema = z.object({
   state: z.enum(PASSAGE_STATES),
   /** Set when the passage is offered, so the most recent ones can be told apart. */
   offeredSequence: z.number().int().min(1).nullable(),
+  /**
+   * How many turns the passage was handed to the agent and the reply did not put it to the person.
+   * It stays open, so it is not lost, but goes behind the passages not yet handed over, and after
+   * `MAX_TIMES_NOT_ASKED` it is no longer handed over at all. Defaults to 0 for a session stored
+   * before this field existed.
+   */
+  timesNotAsked: z.number().int().min(0).max(MAX_TIMES_NOT_ASKED).default(0),
   /** The claims that rest on it: the person's statements, or the document side of a conflict. */
   claimIds: z.array(identifierSchema).max(MAX_CLAIMS_PER_PASSAGE),
 });

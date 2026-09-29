@@ -18,11 +18,13 @@ import {
   isClaimWriteError,
   type SessionChanges,
   STATUSES_WRITABLE_BY,
+  userMessageText,
   validateText,
+  withoutCopiedDocumentDate,
 } from "./claimWriteSupport.ts";
 import type { ResolveConflictCommand } from "./conflictResolution.ts";
 import { applyResolveConflict } from "./conflictResolution.ts";
-import { pairConflictsAfterWrite } from "./detectConflicts.ts";
+import { keepsPassageMeaning, pairConflictsAfterWrite } from "./detectConflicts.ts";
 import {
   findPassage,
   isPassageStale,
@@ -30,6 +32,7 @@ import {
   type ReferenceMaterial,
   updatePassage,
 } from "./referenceSchema.ts";
+import { usesPassageWording } from "./references.ts";
 import type { ReviewClaimCommand } from "./reviewClaim.ts";
 import { applyReviewCommand } from "./reviewClaim.ts";
 import type { SopSession } from "./session.ts";
@@ -191,6 +194,12 @@ const ANSWERABLE_PASSAGE_STATES = ["offered", "used"] as const;
  * that still applies. A claim the user agrees rests on it may reword the passage for this SOP, but
  * every number it states must come from the passage, its quote, or what the user said: a figure
  * cannot appear in the SOP that neither the document nor the user gave.
+ *
+ * An agreement may also rest on a passage not yet put to the user, when the user stated the same
+ * rule in their own words first. Recording it alone would pair it with the passage as a conflict
+ * they then have to settle, although both say the same (seen twice in one manual test). Code checks
+ * what it can: the user's message must use the passage's wording (`usesPassageWording`), and since
+ * the user never saw the passage, every number must come from what they said.
  */
 function checkPassageAnswer(
   session: SopSession,
@@ -215,14 +224,20 @@ function checkPassageAnswer(
   if (passage === undefined) {
     return { code: "passage_not_found", message: "There is no document passage with that id." };
   }
+  const userText = userMessageText(session, input.sourceMessageId);
+  const wasPutToUser = (ANSWERABLE_PASSAGE_STATES as readonly string[]).includes(passage.state);
+  const userStatedItFirst =
+    answer.userAgrees &&
+    passage.state === "open" &&
+    usesPassageWording(userText, passage.statement);
   const isAnswerable =
-    (ANSWERABLE_PASSAGE_STATES as readonly string[]).includes(passage.state) &&
-    !isPassageStale(session, passage);
-  if (!isAnswerable || (!answer.userAgrees && passage.state !== "offered")) {
+    !isPassageStale(session, passage) &&
+    (answer.userAgrees ? wasPutToUser || userStatedItFirst : passage.state === "offered");
+  if (!isAnswerable) {
     return {
       code: "passage_not_offered",
       message:
-        'Only a passage from "documentPassages" or "pendingDocumentPassages", which you have put to the user, can be answered.',
+        'Only a passage from "pendingDocumentPassages", which you have put to the user, can be answered, or one in "documentPassages" that the user stated in their own words.',
     };
   }
   if (passage.field !== input.field) {
@@ -232,18 +247,59 @@ function checkPassageAnswer(
     };
   }
   if (!answer.userAgrees) return null;
-  const userText =
-    session.messages.find((message) => message.id === input.sourceMessageId)?.text ?? "";
-  const sources = [passage.citation.quote, passage.statement, userText];
+  const sources = userStatedItFirst
+    ? [userText]
+    : [passage.citation.quote, passage.statement, userText];
   if (input.previousText !== null) sources.push(input.previousText);
   if (!areNumbersSupported(input.statement, sources)) {
     return {
       code: "statement_not_supported",
+      message: userStatedItFirst
+        ? "The user has not been shown this passage, so every number in the statement must come from what they said. Write their own figures, or put the passage to them."
+        : "Every number in the statement must come from the document passage or from what the user said. Use the passage's figures, or ask the user.",
+    };
+  }
+  // Both what the user said and what the agent wrote must keep the passage's meaning: checking only
+  // the statement would let a statement copied from the passage stand for a message that negates it.
+  if (
+    userStatedItFirst &&
+    !(
+      keepsPassageMeaning(userText, passage.statement) &&
+      keepsPassageMeaning(input.statement, passage.statement)
+    )
+  ) {
+    return {
+      code: "statement_not_supported",
       message:
-        "Every number in the statement must come from the document passage or from what the user said. Use the passage's figures, or ask the user.",
+        "What the user said does not keep the passage's figures, limits or negation, so it is not the same rule. Record their statement without the passage.",
     };
   }
   return null;
+}
+
+/**
+ * The effective date of a claim that answers a passage. An agreement with a passage put to the user
+ * rests on the document, so it carries the passage's date unless one is given. Otherwise (the
+ * user's own different answer, or a rule they stated before the passage was put to them) the claim
+ * never takes the passage's date unless the user stated it (`withoutCopiedDocumentDate`).
+ */
+function effectiveDateForAnswer(
+  session: SopSession,
+  answer: DocumentPassageAnswer | null,
+  effectiveDate: string | null,
+  sourceMessageId: string,
+): string | null {
+  if (answer === null) return effectiveDate;
+  const passage = findPassage(session, answer.passageId);
+  if (passage === undefined) return effectiveDate;
+  if (answer.userAgrees && passage.state !== "open") {
+    return effectiveDate ?? passage.effectiveDate;
+  }
+  return withoutCopiedDocumentDate(
+    effectiveDate,
+    [passage.effectiveDate],
+    userMessageText(session, sourceMessageId),
+  );
 }
 
 /** The reference material after a claim answered a passage: used by the claim, or declined. */
@@ -356,7 +412,12 @@ function applyRecord(
       reference: { kind: "message", messageId: command.sourceMessageId },
     },
     authority: provenance.authority,
-    effectiveDate: text.effectiveDate,
+    effectiveDate: effectiveDateForAnswer(
+      session,
+      answer,
+      text.effectiveDate,
+      command.sourceMessageId,
+    ),
     note: text.note,
     createdByType: command.createdByType,
     conflictsWithClaimId: null,
@@ -455,7 +516,12 @@ function applyCorrect(
       reference: { kind: "message", messageId: command.sourceMessageId },
     },
     authority: provenance.authority,
-    effectiveDate: text.effectiveDate,
+    effectiveDate: effectiveDateForAnswer(
+      session,
+      answer,
+      text.effectiveDate,
+      command.sourceMessageId,
+    ),
     note: text.note,
     // The new wording is the user's. It rests on a passage only when it answers one now.
     basedOnPassageId: answer?.userAgrees ? answer.passageId : null,

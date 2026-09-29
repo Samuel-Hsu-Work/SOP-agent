@@ -7,11 +7,12 @@ import {
   findPassage,
   isPassageStale,
   MAX_TARGET_CLAIMS,
+  MAX_TIMES_NOT_ASKED,
   type ReferencePassage,
   updatePassage,
 } from "./referenceSchema.ts";
 import type { SopSession } from "./session.ts";
-import { normalizeStatement } from "./text.ts";
+import { normalizeStatement, quantitiesIn, significantWordsOf } from "./text.ts";
 import type { WriteContext } from "./writeContext.ts";
 
 /*
@@ -185,6 +186,7 @@ export function addReferenceDocument(
     targetClaimIds,
     state: "open",
     offeredSequence: null,
+    timesNotAsked: 0,
     claimIds: [],
   }));
   const withPassages: SopSession = {
@@ -197,7 +199,13 @@ export function addReferenceDocument(
       passages: [
         ...references.passages.map((existing) =>
           revivedIds.has(existing.passageId)
-            ? { ...existing, targetClaimIds, state: "open" as const, offeredSequence: null }
+            ? {
+                ...existing,
+                targetClaimIds,
+                state: "open" as const,
+                offeredSequence: null,
+                timesNotAsked: 0,
+              }
             : existing,
         ),
         ...passages,
@@ -240,6 +248,82 @@ function isSameDraft(first: PassageDraft, second: PassageDraft): boolean {
 /** Passages that may still be put to the person: not yet offered, and judged against the current target. */
 export function isPassageOpen(session: SopSession, passage: ReferencePassage): boolean {
   return passage.state === "open" && !isPassageStale(session, passage);
+}
+
+/**
+ * How much of a passage's words, and figures, a text must use to be about that passage: a reply
+ * that puts it to the person, or a user's message that states it first. Both reword it, so this is
+ * lower than the conflict rule's overlap; a question that only shares the field's topic uses far
+ * fewer of them.
+ */
+export const PASSAGE_WORDING_OVERLAP = 0.4;
+
+function wordsAndFiguresOf(text: string): Set<string> {
+  return new Set([...significantWordsOf(text), ...quantitiesIn(text)]);
+}
+
+/**
+ * Whether a text uses enough of a passage's wording to be about it. Deterministic, and judged on the
+ * text itself: a passage handed to the agent is not asked just because it was handed over, and a
+ * passage is not what the user said just because the agent says so.
+ */
+export function usesPassageWording(text: string, statement: string): boolean {
+  const passageWords = wordsAndFiguresOf(statement);
+  if (passageWords.size === 0) return false;
+  const textWords = wordsAndFiguresOf(text);
+  let shared = 0;
+  for (const word of passageWords) if (textWords.has(word)) shared += 1;
+  return shared / passageWords.size >= PASSAGE_WORDING_OVERLAP;
+}
+
+/**
+ * The reply names a document, as the agent is told to when it puts a passage to the person ("Your
+ * uploaded handbook says..."). Word overlap alone counts a general question as asking the passage:
+ * "Who approves refunds?" shares most words with "The manager approves refunds" and says nothing of it.
+ */
+const DOCUMENT_CUE = /\b(document|policy|handbook|manual|guide|memo|upload(?:ed)?|file)s?\b/i;
+
+/**
+ * Settles the passages handed to the agent this turn, once its reply is known. A passage the reply
+ * put to the person (it names a document and uses the passage's wording) is offered, so their answer can rest on it. One it did not is left open, to be
+ * handed over again, behind the passages not yet handed over; after `MAX_TIMES_NOT_ASKED` turns it
+ * is no longer handed over. Marking every handed-over passage as offered instead lost one for good
+ * when the agent asked a general question in its place: nothing offers an offered passage again.
+ */
+export function settleShownDocumentPassages(
+  session: SopSession,
+  shownPassageIds: readonly string[],
+  replyText: string,
+): { session: SopSession; askedIds: string[]; notAskedIds: string[] } {
+  const askedIds: string[] = [];
+  const notAskedIds: string[] = [];
+  const citesADocument = DOCUMENT_CUE.test(replyText);
+  for (const passageId of shownPassageIds) {
+    const passage = findPassage(session, passageId);
+    if (passage === undefined || passage.state !== "open") continue;
+    const wasPut = citesADocument && usesPassageWording(replyText, passage.statement);
+    (wasPut ? askedIds : notAskedIds).push(passageId);
+  }
+  const offered = markDocumentPassagesOffered(session, askedIds);
+  if (notAskedIds.length === 0) return { session: offered, askedIds, notAskedIds };
+  return {
+    session: {
+      ...offered,
+      references: {
+        ...offered.references,
+        passages: offered.references.passages.map((passage) =>
+          notAskedIds.includes(passage.passageId)
+            ? {
+                ...passage,
+                timesNotAsked: Math.min(passage.timesNotAsked + 1, MAX_TIMES_NOT_ASKED),
+              }
+            : passage,
+        ),
+      },
+    },
+    askedIds,
+    notAskedIds,
+  };
 }
 
 /** Marks the passages handed to the agent this turn as offered, numbering each offer. */

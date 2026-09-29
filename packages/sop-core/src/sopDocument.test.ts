@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import { applyClaim, type ClaimWriteCommand } from "./applyClaim.ts";
 import { approveSession, setAdvisoryAcknowledgement } from "./approval.ts";
 import type { Claim, ClaimStatus } from "./claim.ts";
-import type { SopSession } from "./session.ts";
+import { createEmptySession, type SopSession } from "./session.ts";
 import {
   buildSopDocument,
   PROVENANCE_TAGS,
@@ -10,7 +10,13 @@ import {
   SOP_DOCUMENT_VERSION,
 } from "./sopDocument.ts";
 import { SOP_FIELD_NAMES, type SopFieldName } from "./sopFields.ts";
-import { buildClaim, createDeterministicContext, createSessionWithUserMessage } from "./testing.ts";
+import {
+  buildClaim,
+  buildPassage,
+  createDeterministicContext,
+  createSessionWithUserMessage,
+  referencesWith,
+} from "./testing.ts";
 
 function deepFreeze<T>(value: T): T {
   if (typeof value === "object" && value !== null && !Object.isFrozen(value)) {
@@ -327,8 +333,29 @@ describe("buildSopDocument", () => {
       expect(lineOf([plain, dated, noted], "controls")).toEqual([
         "from the interview",
         "from the interview, effective 2026-01-01",
-        "from the interview, effective 2026-01-01, Per the 2026 policy.",
+        "from the interview, effective 2026-01-01. Per the 2026 policy.",
       ]);
+    });
+
+    it("prints no note beside a statement that rests on a document passage", () => {
+      const passage = buildPassage({ passageId: "p1", field: "controls", state: "used" });
+      const session: SopSession = {
+        ...createEmptySession(createDeterministicContext()),
+        claims: [
+          buildClaim({
+            claimId: "a",
+            field: "controls",
+            basedOnPassageId: "p1",
+            note: "From the uploaded document; the user said this applies.",
+          }),
+        ],
+        references: referencesWith([passage]),
+      };
+      const item = buildSopDocument(session).sections.find(
+        (section) => section.field === "controls",
+      )?.items[0];
+      expect(item?.sourceLine).toBe("from the interview, based on policy.md, § Rules");
+      expect(item?.note).toBe("From the uploaded document; the user said this applies.");
     });
 
     it("uses a suggestion's note instead of repeating who suggested it", () => {

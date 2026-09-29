@@ -14,7 +14,7 @@ import {
   statesOutOfTime,
 } from "./consistencyReview.ts";
 import { MAX_DOCUMENT_PASSAGES_SHOWN } from "./limits.ts";
-import { isPassageStale, type ReferencePassage } from "./referenceSchema.ts";
+import { isPassageStale, MAX_TIMES_NOT_ASKED, type ReferencePassage } from "./referenceSchema.ts";
 import { isAlreadyStated, isPassageOpen } from "./references.ts";
 import type { SopSession } from "./session.ts";
 import { getFieldDefinition, type SopFieldName } from "./sopFields.ts";
@@ -184,11 +184,20 @@ export function selectDocumentPassages(session: SopSession): DocumentPassageView
     if (gap === null) return 2;
     return gap.severity === "blocking" ? 0 : 1;
   };
+  // A passage the agent was handed and did not ask about goes behind every passage not handed over
+  // yet, so one it keeps passing over cannot hold the others back, and it is not handed over again
+  // once it has been passed over too often.
   const candidates = session.references.passages
     .map((passage, index) => ({ passage, index }))
-    .filter(({ passage }) => isPassageOpen(session, passage) && !isAlreadyStated(session, passage))
+    .filter(
+      ({ passage }) =>
+        isPassageOpen(session, passage) &&
+        passage.timesNotAsked < MAX_TIMES_NOT_ASKED &&
+        !isAlreadyStated(session, passage),
+    )
     .sort(
       (first, second) =>
+        first.passage.timesNotAsked - second.passage.timesNotAsked ||
         fieldRank(first.passage.field) - fieldRank(second.passage.field) ||
         first.index - second.index,
     )

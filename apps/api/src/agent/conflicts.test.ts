@@ -343,6 +343,22 @@ describe("answering a passage in a turn", () => {
       { passageId: passage.passageId },
     ]);
   });
+
+  it("leaves a passage the reply did not put to the user open, to be handed over again", async () => {
+    const { upload, run } = setup();
+    const passage = upload("governance", "The Finance team reviews this process every year.");
+    const result = await run([textStep("Who decides when a payment can go out?")]);
+    expect(findPassage(result.session, passage.passageId)).toMatchObject({
+      state: "open",
+      offeredSequence: null,
+      timesNotAsked: 1,
+    });
+    expect(result.stats).toMatchObject({ documentPassagesOffered: 0, documentPassagesNotAsked: 1 });
+    expect(stateOf(result.session).pendingDocumentPassages).toEqual([]);
+    expect(stateOf(result.session).documentPassages).toMatchObject([
+      { passageId: passage.passageId },
+    ]);
+  });
 });
 
 describe("the state the agent reads", () => {

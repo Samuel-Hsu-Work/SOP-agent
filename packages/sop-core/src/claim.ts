@@ -78,6 +78,7 @@ export const CLAIM_WRITE_ERROR_CODES = [
   "passage_not_offered",
   "passage_field_mismatch",
   "statement_not_supported",
+  "not_a_document_side",
 ] as const;
 
 export type ClaimWriteErrorCode = (typeof CLAIM_WRITE_ERROR_CODES)[number];

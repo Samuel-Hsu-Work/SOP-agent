@@ -8,21 +8,19 @@ import {
   consistencyBasisOf,
   currentClaimDepthReview,
   currentConsistencyReview,
-  type DocumentPassageView,
   keepClaimDepthReviewForCurrentClaims,
   keepConsistencyReviewForCurrentClaims,
   MAX_ASSISTANT_MESSAGE_LENGTH,
   MAX_TOOL_CALLS_PER_MESSAGE,
   markClaimDepthQuestionOffered,
   markConsistencyQuestionOffered,
-  markDocumentPassagesOffered,
   needsClaimDepthReview,
   needsConsistencyReview,
   type PassageState,
   type RecordedToolCall,
   type SopSession,
-  selectDocumentPassages,
   selectReviewQuestions,
+  settleShownDocumentPassages,
   sopSessionSchema,
   type ToolOutcomeErrorCode,
   type WriteContext,
@@ -82,8 +80,10 @@ export interface TurnStats {
   claimDepthFindingsWaiting: number;
   /** The focus of the question handed to the agent for its reply, or null. Never its text. */
   claimDepthQuestionFocus: ClaimDepthFocus | null;
-  /** Document passages handed to the agent for its reply. Counts only, never their text. */
+  /** Document passages the reply put to the user, so their answer can rest on them. Counts only. */
   documentPassagesOffered: number;
+  /** Passages handed to the agent that its reply did not put to the user: left open for later. */
+  documentPassagesNotAsked: number;
   /** Passages the user agreed with this turn, so a claim now rests on them. */
   documentPassagesUsed: number;
   /** Passages the user turned down or answered differently this turn. */
@@ -125,6 +125,7 @@ export function createEmptyTurnStats(): TurnStats {
     claimDepthFindingsWaiting: 0,
     claimDepthQuestionFocus: null,
     documentPassagesOffered: 0,
+    documentPassagesNotAsked: 0,
     documentPassagesUsed: 0,
     documentPassagesDeclined: 0,
     referenceConflictsRaised: 0,
@@ -229,7 +230,9 @@ export async function runAgentTurn(input: RunAgentTurnInput): Promise<RunAgentTu
   let lastAttemptedConsistencyBasis: string | null = null;
   let offeredQuestion: ConsistencyQuestion | null = null;
   let offeredDepthQuestion: ClaimDepthQuestion | null = null;
-  let offeredPassages: DocumentPassageView[] = [];
+  // Every passage any step's state showed: the reply that puts one to the user can be streamed in
+  // an earlier step than the last, whose state may show another.
+  const shownPassageIds = new Set<string>();
 
   const forwardTextDelta = (delta: string) => {
     if (delta.length === 0) return;
@@ -324,12 +327,9 @@ export async function runAgentTurn(input: RunAgentTurnInput): Promise<RunAgentTu
       selectReviewQuestions(working));
     const rendered = renderStateItem({ session: working, allowToolCalls });
     const stateItem = rendered.text;
-    // Only what the state actually showed counts as put to the user: near the size limit it can
-    // hold one passage of the two selected.
-    const shownIds = new Set(rendered.shownDocumentPassageIds);
-    offeredPassages = selectDocumentPassages(working).filter((passage) =>
-      shownIds.has(passage.passageId),
-    );
+    // Only what the state actually showed can have been put to the user: near the size limit it
+    // holds one passage of the two selected.
+    for (const passageId of rendered.shownDocumentPassageIds) shownPassageIds.add(passageId);
     stats.stateItemChars = stateItem.length;
 
     const result = await client.runStep({
@@ -433,16 +433,21 @@ export async function runAgentTurn(input: RunAgentTurnInput): Promise<RunAgentTu
   // Document passages rank between the two: never shown beside a depth question or a mismatch
   // (selectDocumentPassages), and ahead of a consistency question about an omission, which is
   // therefore left unmarked, to be asked on a later turn, whenever passages were shown.
+  // A passage counts as asked only when the reply actually put it to the user: the agent can ask
+  // something else instead, and a passage marked offered then was never raised again. Passages are
+  // settled whatever the last step's state held: one shown and asked in an earlier step stays asked
+  // even when a write in between brought a depth question into the last step.
+  // A consistency question loses to a passage only when the reply actually asked one: a reply that
+  // passed over every passage it was shown asked the consistency question, or nothing, instead.
+  const replyText = assistantText.trim();
+  const settled = settleShownDocumentPassages(working, [...shownPassageIds], replyText);
+  working = settled.session;
+  stats.documentPassagesOffered = settled.askedIds.length;
+  stats.documentPassagesNotAsked = settled.notAskedIds.length;
   if (offeredDepthQuestion !== null) {
     working = markClaimDepthQuestionOffered(working, offeredDepthQuestion.findingId, context);
     stats.claimDepthQuestionFocus = offeredDepthQuestion.focus;
-  } else if (offeredPassages.length > 0) {
-    working = markDocumentPassagesOffered(
-      working,
-      offeredPassages.map((passage) => passage.passageId),
-    );
-    stats.documentPassagesOffered = offeredPassages.length;
-  } else if (offeredQuestion !== null) {
+  } else if (settled.askedIds.length === 0 && offeredQuestion !== null) {
     working = markConsistencyQuestionOffered(working, offeredQuestion.findingId, context);
     stats.consistencyQuestionCategory = offeredQuestion.category;
   }
@@ -454,7 +459,6 @@ export async function runAgentTurn(input: RunAgentTurnInput): Promise<RunAgentTu
     currentConsistencyReview(working)?.findings.filter((finding) => !finding.wasOffered).length ??
     0;
 
-  const replyText = assistantText.trim();
   if (replyText.length === 0) {
     throw new ModelOutputError("The model produced no reply.");
   }

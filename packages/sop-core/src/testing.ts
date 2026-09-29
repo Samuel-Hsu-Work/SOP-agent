@@ -118,6 +118,7 @@ export function buildPassage(
     targetClaimIds: ["target-1"],
     state: "open",
     offeredSequence: null,
+    timesNotAsked: 0,
     claimIds: [],
     ...overrides,
   };
