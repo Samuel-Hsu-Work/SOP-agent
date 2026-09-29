@@ -3,6 +3,13 @@ import { FILE_INPUT_ACCEPT, SUPPORTED_FILE_HINT } from "../lib/extractDocument.t
 import type { ReferenceDocumentView } from "../lib/referenceView.ts";
 import type { UploadReport } from "../lib/useSopSession.ts";
 
+function describePassageCount(document: ReferenceDocumentView): string {
+  const total = `${document.passages.length} ${document.passages.length === 1 ? "passage" : "passages"}`;
+  return document.notYetAnsweredCount === 0
+    ? total
+    : `${total} · ${document.notYetAnsweredCount} not answered yet`;
+}
+
 export interface UploadPanelProps {
   /** A chat turn, another upload, or a review action would collide with this one. */
   isDisabled: boolean;
@@ -67,13 +74,18 @@ export function UploadPanel({
             {report.message}
           </p>
         )}
+        {/* Collapsed by default: the passages are asked about in chat, and a long list would push
+            the review panel below the fold. */}
         {documents.map((document) => (
-          <section
+          <details
             key={document.documentId}
             className="reference-document"
             aria-label={`From ${document.documentName}`}
           >
-            <h3 className="reference-document-name">{document.documentName}</h3>
+            <summary className="reference-summary">
+              <span className="reference-document-name">{document.documentName}</span>
+              <span className="reference-count">{describePassageCount(document)}</span>
+            </summary>
             <ul className="reference-list">
               {document.passages.map((passage) => (
                 <li key={passage.passageId} className="reference-item">
@@ -91,7 +103,7 @@ export function UploadPanel({
                 </li>
               ))}
             </ul>
-          </section>
+          </details>
         ))}
       </div>
     </section>

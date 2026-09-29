@@ -700,14 +700,55 @@ button.link {
   color: var(--blocking);
 }
 
-.reference-document {
+.reference-document[open] {
   display: grid;
   gap: 6px;
 }
 
+.reference-summary {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  cursor: pointer;
+  list-style: none;
+}
+
+.reference-summary::-webkit-details-marker {
+  display: none;
+}
+
+/* The same chevron as the review panel's field rows. */
+.reference-summary::after {
+  content: "";
+  flex-shrink: 0;
+  width: 8px;
+  height: 8px;
+  margin-left: auto;
+  border-right: 2px solid var(--muted);
+  border-bottom: 2px solid var(--muted);
+  transform: rotate(-45deg);
+  transition: transform 0.15s;
+}
+
+.reference-document[open] > .reference-summary::after {
+  transform: rotate(45deg);
+}
+
+.reference-summary:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
 .reference-document-name {
-  margin: 0;
   font-size: 0.9rem;
+  font-weight: 600;
+  overflow-wrap: anywhere;
+}
+
+.reference-count {
+  flex-shrink: 0;
+  color: var(--muted);
+  font-size: 0.8rem;
 }
 
 .reference-list {

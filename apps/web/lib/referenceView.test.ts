@@ -44,6 +44,7 @@ describe("buildReferenceView", () => {
 
     expect(view).toHaveLength(1);
     expect(view[0]?.documentName).toBe("store-policy.pdf");
+    expect(view[0]?.notYetAnsweredCount).toBe(2);
     expect(view[0]?.passages).toMatchObject([
       {
         fieldLabel: "Completion criteria",
@@ -72,9 +73,12 @@ describe("buildReferenceView", () => {
       context,
     );
     if (!withdrawn.ok) throw new Error("setup failed");
-    expect(buildReferenceView(withdrawn.session)[0]?.passages[0]).toMatchObject({
+    const [document] = buildReferenceView(withdrawn.session);
+    expect(document?.passages[0]).toMatchObject({
       isStale: true,
       stateLabel: "Read for an earlier scope: upload again to check it",
     });
+    // A stale passage is never put to the user again, so it is not waiting for an answer.
+    expect(document?.notYetAnsweredCount).toBe(0);
   });
 });

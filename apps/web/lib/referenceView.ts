@@ -32,6 +32,8 @@ export interface ReferenceDocumentView {
   documentId: string;
   documentName: string;
   passages: ReferencePassageView[];
+  /** Passages still waiting for the user's answer, shown while the list is collapsed. */
+  notYetAnsweredCount: number;
 }
 
 /**
@@ -40,15 +42,14 @@ export interface ReferenceDocumentView {
  * answer in chat, never from this list.
  */
 export function buildReferenceView(session: SopSession): ReferenceDocumentView[] {
-  return session.references.documents.map((document) => ({
-    documentId: document.documentId,
-    documentName: document.documentName,
-    passages: session.references.passages
+  return session.references.documents.map((document) => {
+    let notYetAnsweredCount = 0;
+    const passages = session.references.passages
       .filter((passage) => passage.documentId === document.documentId)
       .map((passage) => {
-        const isStale =
-          (passage.state === "open" || passage.state === "offered") &&
-          isPassageStale(session, passage);
+        const isUnanswered = passage.state === "open" || passage.state === "offered";
+        const isStale = isUnanswered && isPassageStale(session, passage);
+        if (isUnanswered && !isStale) notYetAnsweredCount += 1;
         return {
           passageId: passage.passageId,
           fieldLabel: getFieldDefinition(passage.field).label,
@@ -57,6 +58,12 @@ export function buildReferenceView(session: SopSession): ReferenceDocumentView[]
           stateLabel: isStale ? STALE_LABEL : STATE_LABELS[passage.state],
           isStale,
         };
-      }),
-  }));
+      });
+    return {
+      documentId: document.documentId,
+      documentName: document.documentName,
+      passages,
+      notYetAnsweredCount,
+    };
+  });
 }

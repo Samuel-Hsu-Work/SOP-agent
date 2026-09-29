@@ -878,7 +878,10 @@ describe("uploading a document", () => {
     await screen.findByRole("button", { name: "Upload document" });
     chooseFile(policyFile());
 
-    const list = await screen.findByRole("region", { name: "From vendor-payment-policy.md" });
+    const list = await screen.findByRole("group", { name: "From vendor-payment-policy.md" });
+    // Collapsed at first, so the review panel stays in view; the summary says what is waiting.
+    expect((list as HTMLDetailsElement).open).toBe(false);
+    expect(within(list).getByText(/not answered yet$/)).toBeTruthy();
     expect(within(list).getByText("Finance keeps the paperwork for seven years.")).toBeTruthy();
     expect(
       within(list).getByText(
