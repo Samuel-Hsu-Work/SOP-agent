@@ -6,7 +6,7 @@ import type {
   StructuredOutputRequest,
   StructuredOutputResult,
 } from "../model/modelClient.ts";
-import { ModelOutputError } from "../model/modelFallback.ts";
+import { ModelOutputError } from "../model/modelErrors.ts";
 
 /** One scripted model call. It may stream text, return tool calls, or throw. */
 export type ScriptedStep = (

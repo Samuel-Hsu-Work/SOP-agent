@@ -1,7 +1,7 @@
 import { applyClaim, MAX_PASSAGES_PER_UPLOAD, type SopSession } from "@sop-agent/sop-core";
 import { createDeterministicContext, createSessionWithTarget } from "@sop-agent/sop-core/testing";
 import { describe, expect, it } from "vitest";
-import { ModelRefusalError } from "../model/modelFallback.ts";
+import { ModelRefusalError } from "../model/modelErrors.ts";
 import { buildStructuredOutputRequest } from "../model/openaiModelClient.ts";
 import { createScriptedModelClient } from "../testing/fakeModelClient.ts";
 import { EXTRACTION_INSTRUCTIONS, renderDocumentInput } from "./extractionPrompt.ts";

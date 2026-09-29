@@ -1,12 +1,18 @@
-import type OpenAI from "openai";
+import OpenAI from "openai";
 import { describe, expect, it } from "vitest";
 import { AGENT_TOOLS } from "../agent/tools.ts";
 import type { ModelStepRequest } from "./modelClient.ts";
-import { ModelOutputError, ModelRefusalError } from "./modelFallback.ts";
+import {
+  ModelAbortedError,
+  ModelOutputError,
+  ModelProviderError,
+  ModelRefusalError,
+} from "./modelErrors.ts";
 import {
   buildResponsesRequest,
   createOpenAiModelClient,
   stripClientOnlyFields,
+  toModelError,
 } from "./openaiModelClient.ts";
 
 describe("stripClientOnlyFields", () => {
@@ -139,6 +145,44 @@ describe("buildResponsesRequest", () => {
       { type: "function_call_output", call_id: "call_1", output: '{"ok":true}' },
       { role: "user", content: "STATE" },
     ]);
+  });
+});
+
+describe("toModelError", () => {
+  it("turns the SDK's errors into provider-neutral ones, without the provider's text", () => {
+    const headers = new Headers();
+    const cases: [unknown, unknown][] = [
+      [new OpenAI.APIUserAbortError(), ModelAbortedError],
+      [new OpenAI.AuthenticationError(401, {}, "bad key sk-SECRET", headers), ModelProviderError],
+      [new OpenAI.PermissionDeniedError(403, {}, "no access", headers), ModelProviderError],
+      [new OpenAI.NotFoundError(404, {}, "model not found", headers), ModelProviderError],
+    ];
+    for (const [sdkError, expected] of cases) {
+      expect(toModelError(sdkError)).toBeInstanceOf(expected as new () => Error);
+    }
+    const authentication = toModelError(cases[1]?.[0]) as ModelProviderError;
+    expect(authentication.failure).toBe("authentication");
+    expect(authentication.message).not.toContain("SECRET");
+    expect((toModelError(cases[2]?.[0]) as ModelProviderError).failure).toBe("permission");
+    expect((toModelError(cases[3]?.[0]) as ModelProviderError).failure).toBe("unavailable");
+  });
+
+  it("leaves an error that is not the SDK's as it is", () => {
+    const bug = new TypeError("a bug in our own code");
+    expect(toModelError(bug)).toBe(bug);
+  });
+
+  it("translates an error the SDK throws mid-request", async () => {
+    const client = {
+      responses: {
+        stream: () => {
+          throw new OpenAI.AuthenticationError(401, {}, "bad key", new Headers());
+        },
+      },
+    } as unknown as OpenAI;
+    await expect(createOpenAiModelClient(client).runStep(stepRequest())).rejects.toMatchObject({
+      failure: "authentication",
+    });
   });
 });
 

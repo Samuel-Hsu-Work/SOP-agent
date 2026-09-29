@@ -1,10 +1,13 @@
-import OpenAI from "openai";
 import { describe, expect, it, vi } from "vitest";
+import {
+  ModelAbortedError,
+  ModelOutputError,
+  ModelProviderError,
+  ModelRefusalError,
+} from "./modelErrors.ts";
 import {
   DEFAULT_FALLBACK_MODEL,
   DEFAULT_PRIMARY_MODEL,
-  ModelOutputError,
-  ModelRefusalError,
   readModelsFromEnvironment,
   runWithModelFallback,
 } from "./modelFallback.ts";
@@ -54,7 +57,7 @@ describe("runWithModelFallback", () => {
   it("falls back when the primary model is unavailable", async () => {
     const attempt = async (model: string) => {
       if (model === "primary-model") {
-        throw new OpenAI.NotFoundError(404, {}, "model not found", new Headers());
+        throw new ModelProviderError("unavailable", 404);
       }
       return "ok";
     };
@@ -66,13 +69,24 @@ describe("runWithModelFallback", () => {
 
   it("does not fall back on bad credentials, since another model cannot fix them", async () => {
     const attempt = vi.fn(async () => {
-      throw new OpenAI.AuthenticationError(401, {}, "bad key", new Headers());
+      throw new ModelProviderError("authentication", 401);
     });
 
-    await expect(runWithModelFallback(models, attempt)).rejects.toBeInstanceOf(
-      OpenAI.AuthenticationError,
-    );
+    await expect(runWithModelFallback(models, attempt)).rejects.toMatchObject({
+      failure: "authentication",
+    });
     expect(attempt).toHaveBeenCalledTimes(1);
+  });
+
+  it("falls back when an attempt runs out of time, as the extraction's own time limit does", async () => {
+    const attempt = async (model: string) => {
+      if (model === "primary-model") throw new ModelAbortedError("The model request was aborted.");
+      return "ok";
+    };
+
+    const result = await runWithModelFallback(models, attempt);
+
+    expect(result.servedByModel).toBe("fallback-model");
   });
 
   it("does not fall back on errors that are not model or API failures", async () => {

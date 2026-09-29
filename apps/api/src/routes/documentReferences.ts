@@ -14,7 +14,6 @@ import {
   sopSessionSchema,
 } from "@sop-agent/sop-core";
 import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
-import OpenAI from "openai";
 import { MAX_CONCURRENT_EXTRACTIONS } from "../documents/documentLimits.ts";
 import { DocumentParseError } from "../documents/documentParseError.ts";
 import { type ParsedDocument, parseDocument } from "../documents/parseDocument.ts";
@@ -27,7 +26,7 @@ import {
   sessionIdForLog,
 } from "../logging.ts";
 import type { ModelClient } from "../model/modelClient.ts";
-import { ModelOutputError, ModelRefusalError } from "../model/modelFallback.ts";
+import { isModelUnavailable } from "../model/modelErrors.ts";
 import { HTTP_ERROR_MESSAGES, httpError } from "./httpError.ts";
 
 export interface DocumentReferencesRouteDependencies {
@@ -71,14 +70,6 @@ const PARSE_FAILURES: Readonly<
     message: "That document has too much text to read.",
   },
 };
-
-function isModelUnavailable(error: unknown): boolean {
-  return (
-    error instanceof ModelRefusalError ||
-    error instanceof ModelOutputError ||
-    error instanceof OpenAI.APIError
-  );
-}
 
 function fileKindOf(fileName: string): DocumentFileKind | "unknown" {
   return FILE_KIND_BY_EXTENSION[path.extname(fileName).toLowerCase()] ?? "unknown";

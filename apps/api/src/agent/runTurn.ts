@@ -26,7 +26,7 @@ import {
   type WriteContext,
 } from "@sop-agent/sop-core";
 import type { ModelClient, ModelConversationItem } from "../model/modelClient.ts";
-import { ModelOutputError } from "../model/modelFallback.ts";
+import { ModelOutputError } from "../model/modelErrors.ts";
 import { runClaimDepthReview } from "./claimDepthReview.ts";
 import { runConsistencyReview } from "./consistencyReview.ts";
 import {

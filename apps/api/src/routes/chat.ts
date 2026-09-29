@@ -10,7 +10,6 @@ import {
   type WriteContext,
 } from "@sop-agent/sop-core";
 import type { FastifyInstance, FastifyReply } from "fastify";
-import OpenAI from "openai";
 import { buildStateItem, MAX_STATE_ITEM_LENGTH } from "../agent/prompt.ts";
 import { createEmptyTurnStats, runAgentTurn } from "../agent/runTurn.ts";
 import {
@@ -20,11 +19,8 @@ import {
   sessionIdForLog,
 } from "../logging.ts";
 import type { ModelClient } from "../model/modelClient.ts";
-import {
-  ModelOutputError,
-  ModelRefusalError,
-  runWithModelFallback,
-} from "../model/modelFallback.ts";
+import { isModelUnavailable, isRetryableModelFailure } from "../model/modelErrors.ts";
+import { runWithModelFallback } from "../model/modelFallback.ts";
 import { httpError } from "./httpError.ts";
 
 export interface ChatRouteDependencies {
@@ -36,21 +32,6 @@ export interface ChatRouteDependencies {
 
 function countConfirmedClaims(session: SopSession): number {
   return session.claims.filter((claim) => claim.status === "confirmed").length;
-}
-
-function isModelUnavailable(error: unknown): boolean {
-  return (
-    error instanceof ModelRefusalError ||
-    error instanceof ModelOutputError ||
-    error instanceof OpenAI.APIError
-  );
-}
-
-/** Bad credentials or permissions will not fix themselves, so retrying is pointless. */
-function isRetryable(error: unknown): boolean {
-  return !(
-    error instanceof OpenAI.AuthenticationError || error instanceof OpenAI.PermissionDeniedError
-  );
 }
 
 function startNdjsonStream(reply: FastifyReply): {
@@ -214,7 +195,7 @@ export function registerChatRoute(app: FastifyInstance, deps: ChatRouteDependenc
         stream.emit({
           type: "error",
           code: isModelUnavailable(error) ? "model_unavailable" : "internal_error",
-          retryable: isModelUnavailable(error) && isRetryable(error),
+          retryable: isModelUnavailable(error) && isRetryableModelFailure(error),
           message: isModelUnavailable(error)
             ? "The agent could not complete this turn."
             : "Something went wrong on the server.",

@@ -1,6 +1,6 @@
 import { createDeterministicContext } from "@sop-agent/sop-core/testing";
 import { describe, expect, it } from "vitest";
-import { ModelOutputError } from "../model/modelFallback.ts";
+import { ModelOutputError } from "../model/modelErrors.ts";
 import {
   createScriptedModelClient,
   failingStep,

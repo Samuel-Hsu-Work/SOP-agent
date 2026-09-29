@@ -22,7 +22,7 @@ import {
 } from "@sop-agent/sop-core/testing";
 import { describe, expect, it } from "vitest";
 import type { ModelToolCall } from "../model/modelClient.ts";
-import { ModelOutputError } from "../model/modelFallback.ts";
+import { ModelOutputError } from "../model/modelErrors.ts";
 import {
   correctClaimCall,
   createScriptedModelClient,

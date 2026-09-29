@@ -1,7 +1,11 @@
 import type { SopExportRefusalReason } from "@sop-agent/sop-core";
-import OpenAI from "openai";
 import type { DocumentFailureCategory } from "./documents/documentParseError.ts";
-import { ModelOutputError, ModelRefusalError } from "./model/modelFallback.ts";
+import {
+  ModelAbortedError,
+  ModelOutputError,
+  ModelProviderError,
+  ModelRefusalError,
+} from "./model/modelErrors.ts";
 
 /**
  * The kind of a failed model attempt, for logs. It is only a category: never the provider's error
@@ -12,8 +16,8 @@ export type ModelFailureKind = "refusal" | "unusable_output" | "api_error" | "ab
 export function classifyModelError(error: unknown): ModelFailureKind {
   if (error instanceof ModelRefusalError) return "refusal";
   if (error instanceof ModelOutputError) return "unusable_output";
-  if (error instanceof OpenAI.APIUserAbortError) return "aborted";
-  if (error instanceof OpenAI.APIError) return "api_error";
+  if (error instanceof ModelAbortedError) return "aborted";
+  if (error instanceof ModelProviderError) return "api_error";
   if (error instanceof DOMException && error.name === "AbortError") return "aborted";
   return "internal";
 }

@@ -18,7 +18,7 @@ import {
   createSessionWithUserMessage,
 } from "@sop-agent/sop-core/testing";
 import { describe, expect, it } from "vitest";
-import { ModelRefusalError } from "../model/modelFallback.ts";
+import { ModelRefusalError } from "../model/modelErrors.ts";
 import {
   createScriptedModelClient,
   recordClaimCall,

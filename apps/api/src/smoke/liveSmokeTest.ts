@@ -174,6 +174,18 @@ function startingSession(scenario: Scenario): { session: SopSession; userMessage
 }
 
 const client = createOpenAiModelClient(new OpenAI());
+
+/**
+ * A failure for the developer running this script: the provider's own error, which the adapter
+ * keeps as the cause of its neutral error, and never in any log.
+ */
+function describeFailure(error: unknown): string {
+  const provider = error instanceof Error ? error.cause : undefined;
+  if (provider instanceof OpenAI.APIError) {
+    return `${provider.name} (${provider.status}): ${provider.message}`;
+  }
+  return error instanceof Error ? `${error.name}: ${error.message}` : String(error);
+}
 const models = readModelsFromEnvironment();
 let failures = 0;
 
@@ -210,12 +222,7 @@ for (const model of models) {
       );
     } catch (error) {
       failures += 1;
-      const detail =
-        error instanceof OpenAI.APIError
-          ? `${error.name} (${error.status}): ${error.message}`
-          : error instanceof Error
-            ? `${error.name}: ${error.message}`
-            : String(error);
+      const detail = describeFailure(error);
       console.log(`\nFAIL  ${label}\n  ${detail}`);
     }
   }
@@ -260,12 +267,7 @@ for (const model of models) {
     );
   } catch (error) {
     failures += 1;
-    const detail =
-      error instanceof OpenAI.APIError
-        ? `${error.name} (${error.status}): ${error.message}`
-        : error instanceof Error
-          ? `${error.name}: ${error.message}`
-          : String(error);
+    const detail = describeFailure(error);
     console.log(`\nFAIL  ${label}\n  ${detail}`);
   }
 }
@@ -347,12 +349,7 @@ for (const model of models) {
     );
   } catch (error) {
     failures += 1;
-    const detail =
-      error instanceof OpenAI.APIError
-        ? `${error.name} (${error.status}): ${error.message}`
-        : error instanceof Error
-          ? `${error.name}: ${error.message}`
-          : String(error);
+    const detail = describeFailure(error);
     console.log(`\nFAIL  ${label}\n  ${detail}`);
   }
 }
@@ -435,12 +432,7 @@ for (const model of models) {
     );
   } catch (error) {
     failures += 1;
-    const detail =
-      error instanceof OpenAI.APIError
-        ? `${error.name} (${error.status}): ${error.message}`
-        : error instanceof Error
-          ? `${error.name}: ${error.message}`
-          : String(error);
+    const detail = describeFailure(error);
     console.log(`\nFAIL  ${label}\n  ${detail}`);
   }
 }

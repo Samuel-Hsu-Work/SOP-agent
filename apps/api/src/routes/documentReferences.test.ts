@@ -15,7 +15,7 @@ import {
 import { createDeterministicContext, createSessionWithTarget } from "@sop-agent/sop-core/testing";
 import type { FastifyInstance } from "fastify";
 import { afterEach, describe, expect, it } from "vitest";
-import { ModelRefusalError } from "../model/modelFallback.ts";
+import { ModelRefusalError } from "../model/modelErrors.ts";
 import { buildServer } from "../server.ts";
 import {
   buildEncryptedPdf,

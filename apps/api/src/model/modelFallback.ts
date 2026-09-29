@@ -1,4 +1,4 @@
-import OpenAI from "openai";
+import { isWorthTryingAnotherModel } from "./modelErrors.ts";
 
 export const DEFAULT_PRIMARY_MODEL = "gpt-5.6-sol";
 export const DEFAULT_FALLBACK_MODEL = "gpt-5.6-luna";
@@ -13,12 +13,6 @@ export function readModelsFromEnvironment(
   ];
 }
 
-/** The model declined to answer. Trying another model may succeed. */
-export class ModelRefusalError extends Error {}
-
-/** The model answered, but not with usable structured output (cut off, or did not match the schema). */
-export class ModelOutputError extends Error {}
-
 export interface FailedModelAttempt {
   model: string;
   reason: string;
@@ -28,17 +22,6 @@ export interface FallbackResult<T> {
   value: T;
   servedByModel: string;
   failedAttempts: FailedModelAttempt[];
-}
-
-/**
- * Errors that another model cannot fix: bad credentials or permissions apply to the whole account,
- * and the SDK has already retried transient failures by the time an error reaches this code.
- */
-function isWorthTryingAnotherModel(error: unknown): boolean {
-  if (error instanceof ModelRefusalError || error instanceof ModelOutputError) return true;
-  if (error instanceof OpenAI.AuthenticationError) return false;
-  if (error instanceof OpenAI.PermissionDeniedError) return false;
-  return error instanceof OpenAI.APIError;
 }
 
 /**

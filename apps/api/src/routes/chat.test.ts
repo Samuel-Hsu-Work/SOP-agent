@@ -12,11 +12,10 @@ import {
   systemWriteContext,
 } from "@sop-agent/sop-core";
 import type { FastifyInstance } from "fastify";
-import OpenAI from "openai";
 import { afterEach, describe, expect, it } from "vitest";
 import { MAX_TOOL_ROUNDS } from "../agent/runTurn.ts";
 import type { ModelClient } from "../model/modelClient.ts";
-import { ModelRefusalError } from "../model/modelFallback.ts";
+import { ModelProviderError, ModelRefusalError } from "../model/modelErrors.ts";
 import { buildServer, REQUEST_BODY_LIMIT_BYTES } from "../server.ts";
 import {
   createScriptedModelClient,
@@ -378,7 +377,7 @@ describe("POST /chat: falling back to the second model", () => {
 
   it("does not fall back on an authentication error, and sends an error without a commit", async () => {
     const client = createScriptedModelClient([
-      failingStep(new OpenAI.AuthenticationError(401, {}, "bad key", new Headers())),
+      failingStep(new ModelProviderError("authentication", 401)),
     ]);
     const { app, logLines } = await createApp(client);
 

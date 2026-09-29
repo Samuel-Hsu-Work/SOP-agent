@@ -1,4 +1,4 @@
-import type OpenAI from "openai";
+import OpenAI from "openai";
 import { zodResponsesFunction, zodTextFormat } from "openai/helpers/zod";
 import type {
   ModelClient,
@@ -9,7 +9,12 @@ import type {
   StructuredOutputRequest,
   StructuredOutputResult,
 } from "./modelClient.ts";
-import { ModelOutputError, ModelRefusalError } from "./modelFallback.ts";
+import {
+  ModelAbortedError,
+  ModelOutputError,
+  ModelProviderError,
+  ModelRefusalError,
+} from "./modelErrors.ts";
 
 /**
  * Room for one model step: a question, a short reply, and the tool calls that record a whole
@@ -99,77 +104,112 @@ export function stripClientOnlyFields(value: unknown): unknown {
   return value;
 }
 
+/**
+ * The SDK's errors as the provider-neutral ones every caller classifies (`modelErrors.ts`), so no
+ * code outside this adapter needs the SDK to tell a bad key from an outage. The SDK's own message is
+ * kept out of the new error's message, which can reach a log line's text: it can quote the request.
+ * It stays only as the `cause`, for a developer tool.
+ */
+export function toModelError(error: unknown): unknown {
+  // An abort is an APIError subclass, so it is checked first.
+  if (error instanceof OpenAI.APIUserAbortError) {
+    return new ModelAbortedError("The model request was aborted.");
+  }
+  if (error instanceof OpenAI.AuthenticationError) {
+    return new ModelProviderError("authentication", error.status, error);
+  }
+  if (error instanceof OpenAI.PermissionDeniedError) {
+    return new ModelProviderError("permission", error.status, error);
+  }
+  if (error instanceof OpenAI.APIError) {
+    return new ModelProviderError("unavailable", error.status, error);
+  }
+  return error;
+}
+
+async function translatingErrors<T>(call: () => Promise<T>): Promise<T> {
+  try {
+    return await call();
+  } catch (error) {
+    throw toModelError(error);
+  }
+}
+
 /** The only place that talks to the OpenAI SDK. */
 export function createOpenAiModelClient(client: OpenAI): ModelClient {
   return {
-    async runStep(request: ModelStepRequest): Promise<ModelStepResult> {
-      const stream = client.responses.stream(buildResponsesRequest(request), {
-        signal: request.signal,
-      });
+    runStep: (request) => translatingErrors(() => runStep(client, request)),
+    runStructuredOutput: (request) => translatingErrors(() => runStructuredOutput(client, request)),
+  };
+}
 
-      for await (const event of stream) {
-        if (event.type === "response.output_text.delta") request.onTextDelta(event.delta);
-      }
-      const response = await stream.finalResponse();
+async function runStep(client: OpenAI, request: ModelStepRequest): Promise<ModelStepResult> {
+  const stream = client.responses.stream(buildResponsesRequest(request), {
+    signal: request.signal,
+  });
 
-      for (const item of response.output) {
-        if (item.type !== "message") continue;
-        for (const content of item.content) {
-          if (content.type === "refusal") throw new ModelRefusalError(content.refusal);
-        }
-      }
-      // Only a completed response may be used. A stream that ends early can still return a snapshot
-      // whose status is `in_progress`, `failed`, or `cancelled`, and committing that would defeat
-      // both the fallback and the all-or-nothing turn.
-      if (response.status !== "completed") {
-        const detail =
-          response.status === "incomplete"
-            ? `, ${response.incomplete_details?.reason ?? "unknown reason"}`
-            : "";
-        throw new ModelOutputError(`Response did not complete (${response.status}${detail}).`);
-      }
+  for await (const event of stream) {
+    if (event.type === "response.output_text.delta") request.onTextDelta(event.delta);
+  }
+  const response = await stream.finalResponse();
 
-      const toolCalls: ModelToolCall[] = [];
-      for (const item of response.output) {
-        if (item.type === "function_call") {
-          toolCalls.push({ callId: item.call_id, name: item.name, argumentsJson: item.arguments });
-        }
-      }
+  for (const item of response.output) {
+    if (item.type !== "message") continue;
+    for (const content of item.content) {
+      if (content.type === "refusal") throw new ModelRefusalError(content.refusal);
+    }
+  }
+  // Only a completed response may be used. A stream that ends early can still return a snapshot
+  // whose status is `in_progress`, `failed`, or `cancelled`, and committing that would defeat
+  // both the fallback and the all-or-nothing turn.
+  if (response.status !== "completed") {
+    const detail =
+      response.status === "incomplete"
+        ? `, ${response.incomplete_details?.reason ?? "unknown reason"}`
+        : "";
+    throw new ModelOutputError(`Response did not complete (${response.status}${detail}).`);
+  }
 
-      return {
-        toolCalls,
-        providerItems: response.output.map(stripClientOnlyFields),
-        inputTokens: response.usage?.input_tokens ?? 0,
-        cachedInputTokens: response.usage?.input_tokens_details?.cached_tokens ?? 0,
-        outputTokens: response.usage?.output_tokens ?? 0,
-      };
-    },
+  const toolCalls: ModelToolCall[] = [];
+  for (const item of response.output) {
+    if (item.type === "function_call") {
+      toolCalls.push({ callId: item.call_id, name: item.name, argumentsJson: item.arguments });
+    }
+  }
 
-    async runStructuredOutput<T>(
-      request: StructuredOutputRequest<T>,
-    ): Promise<StructuredOutputResult<T>> {
-      const response = await client.responses.parse(buildStructuredOutputRequest(request), {
-        signal: request.signal,
-      });
+  return {
+    toolCalls,
+    providerItems: response.output.map(stripClientOnlyFields),
+    inputTokens: response.usage?.input_tokens ?? 0,
+    cachedInputTokens: response.usage?.input_tokens_details?.cached_tokens ?? 0,
+    outputTokens: response.usage?.output_tokens ?? 0,
+  };
+}
 
-      for (const item of response.output) {
-        if (item.type !== "message") continue;
-        for (const content of item.content) {
-          if (content.type === "refusal") throw new ModelRefusalError(content.refusal);
-        }
-      }
-      if (response.status !== "completed") {
-        throw new ModelOutputError(`Response did not complete (${response.status}).`);
-      }
-      if (response.output_parsed === null || response.output_parsed === undefined) {
-        throw new ModelOutputError("The model returned no structured output.");
-      }
-      return {
-        output: response.output_parsed as T,
-        inputTokens: response.usage?.input_tokens ?? 0,
-        cachedInputTokens: response.usage?.input_tokens_details?.cached_tokens ?? 0,
-        outputTokens: response.usage?.output_tokens ?? 0,
-      };
-    },
+async function runStructuredOutput<T>(
+  client: OpenAI,
+  request: StructuredOutputRequest<T>,
+): Promise<StructuredOutputResult<T>> {
+  const response = await client.responses.parse(buildStructuredOutputRequest(request), {
+    signal: request.signal,
+  });
+
+  for (const item of response.output) {
+    if (item.type !== "message") continue;
+    for (const content of item.content) {
+      if (content.type === "refusal") throw new ModelRefusalError(content.refusal);
+    }
+  }
+  if (response.status !== "completed") {
+    throw new ModelOutputError(`Response did not complete (${response.status}).`);
+  }
+  if (response.output_parsed === null || response.output_parsed === undefined) {
+    throw new ModelOutputError("The model returned no structured output.");
+  }
+  return {
+    output: response.output_parsed as T,
+    inputTokens: response.usage?.input_tokens ?? 0,
+    cachedInputTokens: response.usage?.input_tokens_details?.cached_tokens ?? 0,
+    outputTokens: response.usage?.output_tokens ?? 0,
   };
 }
