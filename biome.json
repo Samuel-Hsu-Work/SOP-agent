@@ -23,7 +23,110 @@
   "linter": {
     "enabled": true,
     "rules": {
-      "preset": "recommended"
+      "preset": "recommended",
+      "suspicious": {
+        "noImportCycles": "error"
+      }
     }
-  }
+  },
+  "overrides": [
+    {
+      "includes": ["packages/sop-core/**"],
+      "linter": {
+        "rules": {
+          "style": {
+            "noRestrictedImports": {
+              "level": "error",
+              "options": {
+                "paths": {
+                  "openai": "sop-core runs in the browser and the API alike: it imports nothing from the apps, a server framework or the model SDK.",
+                  "fastify": "sop-core runs in the browser and the API alike: it imports nothing from the apps, a server framework or the model SDK.",
+                  "@fastify/multipart": "sop-core runs in the browser and the API alike: it imports nothing from the apps, a server framework or the model SDK.",
+                  "@fastify/cors": "sop-core runs in the browser and the API alike: it imports nothing from the apps, a server framework or the model SDK.",
+                  "next": "sop-core runs in the browser and the API alike: it imports nothing from the apps, a server framework or the model SDK.",
+                  "react": "sop-core runs in the browser and the API alike: it imports nothing from the apps, a server framework or the model SDK.",
+                  "react-dom": "sop-core runs in the browser and the API alike: it imports nothing from the apps, a server framework or the model SDK.",
+                  "pdfkit": "sop-core runs in the browser and the API alike: it imports nothing from the apps, a server framework or the model SDK.",
+                  "@sop-agent/api": "sop-core runs in the browser and the API alike: it imports nothing from the apps, a server framework or the model SDK.",
+                  "@sop-agent/web": "sop-core runs in the browser and the API alike: it imports nothing from the apps, a server framework or the model SDK."
+                },
+                "patterns": [
+                  {
+                    "group": ["node:*", "**/apps/**", "next/*", "openai/*"],
+                    "message": "sop-core runs in the browser and the API alike: it imports nothing from the apps, a server framework or the model SDK."
+                  }
+                ]
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "includes": ["apps/web/**"],
+      "linter": {
+        "rules": {
+          "style": {
+            "noRestrictedImports": {
+              "level": "error",
+              "options": {
+                "paths": {
+                  "openai": "The web app never talks to the model; the OpenAI key never goes in apps/web.",
+                  "@sop-agent/api": "The web app reaches the API over HTTP only."
+                },
+                "patterns": [
+                  {
+                    "group": ["**/apps/api/**", "**/api/src/**"],
+                    "message": "The web app reaches the API over HTTP only."
+                  },
+                  {
+                    "group": ["@sop-agent/sop-core/src/*", "**/sop-core/src/**"],
+                    "message": "Import sop-core through its package entry points (@sop-agent/sop-core, @sop-agent/sop-core/testing), never a file inside it."
+                  }
+                ]
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "includes": [
+        "apps/api/src/**",
+        "!apps/api/src/model/openaiModelClient.ts",
+        "!apps/api/src/model/openaiModelClient.test.ts",
+        "!apps/api/src/start.ts",
+        "!apps/api/src/evals/**",
+        "!apps/api/src/smoke/**"
+      ],
+      "linter": {
+        "rules": {
+          "style": {
+            "noRestrictedImports": {
+              "level": "error",
+              "options": {
+                "paths": {
+                  "openai": "Only the model adapter (model/openaiModelClient.ts), the composition root (start.ts) and the live eval and smoke tooling import the OpenAI SDK. Use the ModelClient interface and model/modelErrors.ts."
+                },
+                "patterns": [
+                  {
+                    "group": ["openai/*"],
+                    "message": "Only the model adapter (model/openaiModelClient.ts), the composition root (start.ts) and the live eval and smoke tooling import the OpenAI SDK. Use the ModelClient interface and model/modelErrors.ts."
+                  },
+                  {
+                    "group": ["**/apps/web/**", "**/web/lib/**", "**/web/components/**"],
+                    "message": "The API never imports the web app."
+                  },
+                  {
+                    "group": ["@sop-agent/sop-core/src/*", "**/sop-core/src/**"],
+                    "message": "Import sop-core through its package entry points (@sop-agent/sop-core, @sop-agent/sop-core/testing), never a file inside it."
+                  }
+                ]
+              }
+            }
+          }
+        }
+      }
+    }
+  ]
 }
