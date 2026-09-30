@@ -172,22 +172,6 @@ Three packages in one pnpm workspace, TypeScript throughout.
 The prompt is split for caching and safety: fixed instructions, plus the current state of the SOP and
 the interview agenda (which fields to ask next, computed in code) as a separate item on every call.
 
-## What was left out, and why
-
-This is a take-home build of a larger design: a multi-tenant product in which a process owner is
-interviewed and a separate approver signs the SOP off. The part being evaluated is the agent, so v1
-keeps everything that shows how it interviews, finds gaps and refuses to guess, and cuts the rest on
-purpose:
-
-- **One person, not two.** The same person is interviewed, reviews the claims and approves. In the
-  full design the draft goes to an approver, who can send an item back to the process owner or
-  escalate an advisory gap to blocking. Here there is no handoff, and which fields block approval is
-  fixed.
-- **No versions.** "Reopen for editing" puts an approved SOP back to draft, and it must be approved
-  again, but the earlier approved state is not kept and there is no diff between versions.
-- **No accounts.** No login, organizations or roles, and one hard-coded company.
-- **No persistence.** Everything lives in the browser tab; the next section says why.
-
 ## What is stored, and what is not
 
 - **The server stores nothing.** No database, no files, no in-memory sessions. Each request carries
@@ -206,11 +190,9 @@ purpose:
 
 ## Why there is no database
 
-The project exists to show the agent working: how it interviews, finds gaps, and refuses to settle
-what it does not know. A database, logins and tenants would not show any of that, so v1 leaves them
-out on purpose. Leaving out a database is a separate choice from leaving out tenants. A single-user
-SQLite file would have been small. The choice is where the state lives: in the browser tab rather
-than on the server.
+The session lives in the browser tab rather than in a server-side database. This is a deliberate
+trade-off: it keeps the focus on the agent, keeps deployment simple, and lets the project run with
+`pnpm install` and `pnpm dev`, with no database or Docker to set up.
 
 What that buys:
 
@@ -241,10 +223,9 @@ What adding a database would change:
   types and the functions that shape what the page shows.
 - The recheck of a forged session and the size cap on requests go away. Retention, deletion,
   schema migrations and concurrent writes to one session become new work.
-- The claim history and the approved SOP become a lasting audit trail, which v1 does not provide.
+- The claim history and the approved SOP become a lasting audit trail.
 
-The full product design (Postgres with row-level security and append-only claim history) remains
-the target. The rules and the single path that writes a claim would carry over unchanged.
+The rules and the single path that writes a claim would carry over unchanged.
 
 ## Deploy
 
@@ -287,37 +268,3 @@ only, so a browser on any other address, including a Vercel preview deployment, 
 Things to expect on the free plans: Render puts a service to sleep after fifteen idle minutes, so the
 first request after a pause takes about a minute. Every reply is streamed, and the browser shows it
 as it arrives. If the first message seems stuck, wait for the service to wake up.
-
-## Known limits
-
-- The conflict rule is a heuristic on purpose. It over-flags a paraphrase rather than miss a
-  disagreement, and it cannot tell that a passage was filed under the wrong field.
-- A document is judged for relevance once, when it is uploaded. If the SOP's scope changes, its
-  passages stop being offered, and the document has to be uploaded again to be read for the new scope.
-- Code checks a passage's numbers against its quote, but not its meaning: a statement that rewords the
-  quote wrongly is caught by the person, who sees the quote beside it and answers in chat.
-- The two review checks (what a finished SOP leaves unsaid, and a step too thin to carry out) are model
-  judgments. They can miss something, or ask about something that is actually fine. Code checks what
-  they return and decides when a question is asked, and a finding is only ever a question, so neither
-  can change a claim or block approval.
-- Two uploads with the same file name count as one source, so a revised file with the same name cannot
-  conflict with the earlier one.
-- PDFs use a standard font, so a character outside Latin-1 prints as a visible `<U+XXXX>` marker.
-- A document parser that never returns would block the API until Render's health check restarts it.
-  The size, page, section and text limits and a two-at-a-time cap make this unlikely, and it costs
-  no model money, so there is no separate hard timeout.
-- Everything is English, including the agent's replies, whatever language the person writes in.
-- A chat turn has no overall time limit and no cancel button. If the model provider hangs, the reply
-  shows "Sending…" until the provider gives up (several minutes at worst); New chat stops it, but
-  also starts a new SOP.
-- The session's total size is checked when a document is added, not as messages accumulate. A chat
-  of many very long messages could outgrow what a request may carry (1 MiB), after which neither chat
-  nor the PDF download works for that session.
-- The browser cannot tell that it blocked a download, so a blocked download is still recorded as
-  started, and the warning before leaving the page no longer appears.
-- When a document is uploaded, its passages are put to the person before the remaining blocking
-  questions, so an early upload delays questions such as what starts the process.
-- The agent sometimes words a statement more strongly than the person did ("must" for "should", or
-  "approval" for "ask"). The review panel shows every claim for the person to confirm or correct.
-- A conflict in an advisory field can be acknowledged and the SOP approved with it open; the PDF
-  prints both sides as open items, not as instructions.

@@ -17,7 +17,8 @@ export const MAX_ZIP_UNCOMPRESSED_BYTES = 16 * 1024 * 1024;
 
 /**
  * A soft budget for reading a file, checked between pages and sections. A hard limit would need a
- * worker thread, which slice 7 decided against (see README, "Known limits").
+ * worker thread, which slice 7 decided against: the size, page, section and text limits and the
+ * two-at-a-time cap make a parser that never returns unlikely.
  */
 export const PARSE_BUDGET_MS = 10_000;
 
