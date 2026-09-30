@@ -124,13 +124,28 @@ export function toModelError(error: unknown): unknown {
   if (error instanceof OpenAI.APIError) {
     return new ModelProviderError("unavailable", error.status, error);
   }
-  // A stream that breaks off or never produces a response ("stream ended without producing a
-  // Response") is the SDK's base error, not an APIError. It is the provider failing too, so the
-  // fallback model is tried for it the same way.
-  if (error instanceof OpenAI.OpenAIError) {
-    return new ModelProviderError("unavailable", undefined, error);
-  }
   return error;
+}
+
+/**
+ * The messages the SDK's response stream uses when the stream breaks off or never produces a
+ * response. They are its base `OpenAIError`, not an `APIError`, and that base class is also what a
+ * local configuration or request-building mistake throws, so only these count as the provider
+ * failing (and worth the fallback model); anything else stays a server defect.
+ */
+const BROKEN_STREAM_MESSAGES = [
+  "stream ended without producing a Response",
+  "request ended without sending any events",
+  "stream has ended, this shouldn't happen",
+];
+
+/** A failure while reading the response stream, as the provider error it is when the stream broke. */
+function asBrokenStream(error: unknown): unknown {
+  const isBrokenStream =
+    error instanceof OpenAI.OpenAIError &&
+    !(error instanceof OpenAI.APIError) &&
+    BROKEN_STREAM_MESSAGES.some((message) => error.message.startsWith(message));
+  return isBrokenStream ? new ModelProviderError("unavailable", undefined, error) : error;
 }
 
 async function translatingErrors<T>(call: () => Promise<T>): Promise<T> {
@@ -154,10 +169,15 @@ async function runStep(client: OpenAI, request: ModelStepRequest): Promise<Model
     signal: request.signal,
   });
 
-  for await (const event of stream) {
-    if (event.type === "response.output_text.delta") request.onTextDelta(event.delta);
+  let response: Awaited<ReturnType<typeof stream.finalResponse>>;
+  try {
+    for await (const event of stream) {
+      if (event.type === "response.output_text.delta") request.onTextDelta(event.delta);
+    }
+    response = await stream.finalResponse();
+  } catch (error) {
+    throw asBrokenStream(error);
   }
-  const response = await stream.finalResponse();
 
   for (const item of response.output) {
     if (item.type !== "message") continue;

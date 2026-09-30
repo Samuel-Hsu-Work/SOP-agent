@@ -168,13 +168,40 @@ describe("toModelError", () => {
     expect((toModelError(cases[3]?.[0]) as ModelProviderError).failure).toBe("unavailable");
   });
 
-  it("treats a stream that breaks off as the provider being unavailable, so it falls back", () => {
-    const broken = toModelError(
-      new OpenAI.OpenAIError("stream ended without producing a Response"),
-    );
+  it("treats a stream that breaks off as the provider being unavailable, so it falls back", async () => {
+    const breakingClient = (message: string) =>
+      ({
+        responses: {
+          stream: () => ({
+            // biome-ignore lint/correctness/useYield: the stream breaks before its first event.
+            async *[Symbol.asyncIterator]() {
+              throw new OpenAI.OpenAIError(message);
+            },
+            finalResponse: async () => ({}),
+          }),
+        },
+      }) as unknown as OpenAI;
+
+    const broken = await createOpenAiModelClient(
+      breakingClient("stream ended without producing a Response"),
+    )
+      .runStep(stepRequest())
+      .catch((error: unknown) => error);
     expect(broken).toBeInstanceOf(ModelProviderError);
     expect((broken as ModelProviderError).failure).toBe("unavailable");
     expect(isWorthTryingAnotherModel(broken)).toBe(true);
+
+    // The same base class from anything but a broken stream is a defect here, not an outage.
+    const defect = await createOpenAiModelClient(breakingClient("could not build the request"))
+      .runStep(stepRequest())
+      .catch((error: unknown) => error);
+    expect(defect).toBeInstanceOf(OpenAI.OpenAIError);
+    expect(isWorthTryingAnotherModel(defect)).toBe(false);
+  });
+
+  it("does not treat the SDK's base error outside a stream as an outage", () => {
+    const error = new OpenAI.OpenAIError("stream ended without producing a Response");
+    expect(toModelError(error)).toBe(error);
   });
 
   it("leaves an error that is not the SDK's as it is", () => {
