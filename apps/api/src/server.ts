@@ -14,8 +14,9 @@ import { HTTP_ERROR_MESSAGES, httpError } from "./routes/httpError.ts";
 import { registerSopPdfRoute } from "./routes/sopPdf.ts";
 
 /**
- * One megabyte. A session is bounded by its own schema, and slice 5 will need to raise this along
- * with the document upload limit, since parsed document sections travel inside the session.
+ * One megabyte. Every chat and PDF request carries the whole session, which holds no document text
+ * (only a few passages and their citations), and an upload is refused in the browser if it would
+ * push the session past `MAX_SESSION_TRANSPORT_BYTES`.
  */
 export const REQUEST_BODY_LIMIT_BYTES = 1_048_576;
 

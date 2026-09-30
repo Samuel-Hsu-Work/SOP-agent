@@ -1,8 +1,9 @@
 /*
  * The errors a `ModelClient` throws, whatever the provider behind it. The OpenAI adapter translates
  * the SDK's own errors into these, so the fallback, the logs and the routes classify a failure
- * without importing the SDK. None carries the provider's error text, which can quote the
- * conversation.
+ * without importing the SDK. A provider error keeps the provider's own error only as its `cause`,
+ * never in its message, which can quote the conversation. A refusal's message is the model's own
+ * refusal text: it is never logged, and the logs classify every failure by kind only.
  */
 
 /** The model declined to answer. Trying another model may succeed. */

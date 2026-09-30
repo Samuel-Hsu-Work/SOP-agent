@@ -307,3 +307,17 @@ as it arrives. If the first message seems stuck, wait for the service to wake up
   The size, page, section and text limits and a two-at-a-time cap make this unlikely, and it costs
   no model money, so there is no separate hard timeout.
 - Everything is English, including the agent's replies, whatever language the person writes in.
+- A chat turn has no overall time limit and no cancel button. If the model provider hangs, the reply
+  shows "Sending…" until the provider gives up (several minutes at worst); New chat stops it, but
+  also starts a new SOP.
+- The session's total size is checked when a document is added, not as messages accumulate. A chat
+  of many very long messages could outgrow what a request may carry (1 MiB), after which neither chat
+  nor the PDF download works for that session.
+- The browser cannot tell that it blocked a download, so a blocked download is still recorded as
+  started, and the warning before leaving the page no longer appears.
+- When a document is uploaded, its passages are put to the person before the remaining blocking
+  questions, so an early upload delays questions such as what starts the process.
+- The agent sometimes words a statement more strongly than the person did ("must" for "should", or
+  "approval" for "ask"). The review panel shows every claim for the person to confirm or correct.
+- A conflict in an advisory field can be acknowledged and the SOP approved with it open; the PDF
+  prints both sides as open items, not as instructions.

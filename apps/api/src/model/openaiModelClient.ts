@@ -124,6 +124,12 @@ export function toModelError(error: unknown): unknown {
   if (error instanceof OpenAI.APIError) {
     return new ModelProviderError("unavailable", error.status, error);
   }
+  // A stream that breaks off or never produces a response ("stream ended without producing a
+  // Response") is the SDK's base error, not an APIError. It is the provider failing too, so the
+  // fallback model is tried for it the same way.
+  if (error instanceof OpenAI.OpenAIError) {
+    return new ModelProviderError("unavailable", undefined, error);
+  }
   return error;
 }
 

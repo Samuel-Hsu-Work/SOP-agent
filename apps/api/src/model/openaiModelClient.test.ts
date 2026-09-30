@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import { AGENT_TOOLS } from "../agent/tools.ts";
 import type { ModelStepRequest } from "./modelClient.ts";
 import {
+  isWorthTryingAnotherModel,
   ModelAbortedError,
   ModelOutputError,
   ModelProviderError,
@@ -165,6 +166,15 @@ describe("toModelError", () => {
     expect(authentication.message).not.toContain("SECRET");
     expect((toModelError(cases[2]?.[0]) as ModelProviderError).failure).toBe("permission");
     expect((toModelError(cases[3]?.[0]) as ModelProviderError).failure).toBe("unavailable");
+  });
+
+  it("treats a stream that breaks off as the provider being unavailable, so it falls back", () => {
+    const broken = toModelError(
+      new OpenAI.OpenAIError("stream ended without producing a Response"),
+    );
+    expect(broken).toBeInstanceOf(ModelProviderError);
+    expect((broken as ModelProviderError).failure).toBe("unavailable");
+    expect(isWorthTryingAnotherModel(broken)).toBe(true);
   });
 
   it("leaves an error that is not the SDK's as it is", () => {

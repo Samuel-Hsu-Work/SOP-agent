@@ -15,7 +15,10 @@ export const MAX_DOCUMENT_CHARACTERS = 100_000;
 export const MAX_ZIP_ENTRIES = 500;
 export const MAX_ZIP_UNCOMPRESSED_BYTES = 16 * 1024 * 1024;
 
-/** A soft budget for reading a file, checked between pages and sections. A hard limit needs a worker (slice 6). */
+/**
+ * A soft budget for reading a file, checked between pages and sections. A hard limit would need a
+ * worker thread, which slice 7 decided against (see README, "Known limits").
+ */
 export const PARSE_BUDGET_MS = 10_000;
 
 /** The model call: per attempt, and the room it has to write its answer. */
