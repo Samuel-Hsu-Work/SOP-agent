@@ -140,21 +140,6 @@ pnpm typecheck
 pnpm lint
 ```
 
-Three checks use the live model, cost a few cents each, and need `OPENAI_API_KEY`:
-
-```bash
-pnpm smoke:api            # the agent's tools, one document reading, one consistency
-                          #   review and one claim-depth review, on both models
-pnpm eval                 # 29 scripted interviews with safety and behavior assertions
-                          #   EVAL_MODELS=all also runs the fallback model
-pnpm measure:extraction    # document reading on every sample, scored against two answer keys:
-                          #   field labels, and what one broad policy keeps for two different SOPs
-```
-
-Safety assertions must pass on every trial, behavior assertions on 2 of 3. `pnpm eval:recheck
-evals/runs/<file>.json` (the path is relative to `apps/api`) re-scores a saved run offline, and
-`pnpm fixtures:documents` regenerates the sample documents.
-
 ## How it is built
 
 Three packages in one pnpm workspace, TypeScript throughout.
